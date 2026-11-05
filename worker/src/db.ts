@@ -111,6 +111,24 @@ export function poolSsl(ssl: false | "require"): boolean {
   return ssl === "require";
 }
 
+/**
+ * Postgres `date` as the plain "YYYY-MM-DD" it is, not a JS Date.
+ *
+ * postgres.js turns `date` into a Date by default, and a Date serializes to
+ * "2026-11-05T00:00:00.000Z". The one `date` column is `one_on_ones.series_date`,
+ * and the app compares it to plain dates: a moved or skipped week's series date
+ * never matched, so the rhythm drew that week again after a reload. (Only OID
+ * 1082 is replaced; timestamps keep their parsers.)
+ */
+export const DATE_AS_STRING = {
+  dateAsString: {
+    to: 1082,
+    from: [1082],
+    serialize: (x: unknown) => (x instanceof Date ? x.toISOString().slice(0, 10) : String(x)),
+    parse: (x: string) => x,
+  },
+};
+
 export function createSql(env: Env): Sql {
   const url = databaseUrl(env);
   if (!url) throw new Error("database is not configured (HYPERDRIVE or DATABASE_URL)");
@@ -120,6 +138,7 @@ export function createSql(env: Env): Sql {
     prepare: false,
     connect_timeout: CONNECT_TIMEOUT_SECONDS,
     ssl,
+    types: DATE_AS_STRING,
   });
 }
 

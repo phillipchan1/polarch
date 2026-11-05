@@ -33,7 +33,7 @@ import type {
   TopicLane,
   TrackedMeeting,
 } from "../types";
-import { addDays, daysBetween, sessionsFor, todayISO, projectFromLast, explicitNextDate, weekdayUTC, CADENCE_DAYS, heldSessions, lastRhythmDate, nextOpenRhythmDate, takenSeriesDates } from "./readiness";
+import { addDays, daysBetween, sessionsFor, todayISO, projectFromLast, explicitNextDate, weekdayUTC, CADENCE_DAYS, heldSessions, lastRhythmDate, nextOpenRhythmDate, takenSeriesDates } from "./readiness.ts";
 
 /** How far the planner looks by default — a quarter of weekly meetings, not three weeks. */
 export const SLOTS_AHEAD = 8;

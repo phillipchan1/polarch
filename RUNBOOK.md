@@ -109,6 +109,12 @@ transaction. To undo just that column (same statement as
 ALTER TABLE rate_limit DROP COLUMN IF EXISTS window_start;
 ```
 
+The MCP server adds two more files: `006_mcp_oauth.sql` (OAuth clients, grants,
+codes, tokens) and `007_mcp_changes.sql` (the undo journal). **Apply both to
+prod before deploying a Worker that mounts `/mcp`**: the Worker reads them on
+every call. Details, and what rolling each back does, are under
+[Connecting Claude and ChatGPT (MCP)](#connecting-claude-and-chatgpt-mcp).
+
 ---
 
 ## Data migration (source is read-only)
@@ -691,3 +697,144 @@ magic link. Code: `googleSocialProviders`, `ACCOUNT_LINKING` and
   link unchanged). Or `wrangler rollback <previous version id>`. No schema
   change; linked `account` rows are harmless if left, or
   `DELETE FROM account WHERE provider_id = 'google';`.
+
+## Connecting Claude and ChatGPT (MCP)
+
+Polarch is an MCP server. An assistant you connect can see what's coming up
+across every meeting and **plan, rearrange and close out agendas** for you:
+capture ideas, move topics between weeks and sections, tag them, park or roll
+them forward, skip or reschedule a meeting, create a meeting, set its sections,
+manage tags, start and run an arc, add follow-ups. If you also give it **the
+people records**, it can read and update health reads, prayer, assessments,
+notes, wins, goals, what's known, fixtures, write-ups and transcripts. Every
+change is journaled and undoable. It is one Worker route,
+`https://polarch.day/mcp`, with a small OAuth server in front of it; no new
+service, binding or secret.
+
+### Deploy order
+
+1. Apply `worker/schema/005_arcs_and_sharing.sql` (if not yet),
+   `006_mcp_oauth.sql`, `007_mcp_changes.sql` to the prod Neon database, the
+   same manual way as 001–004. All are idempotent (`IF NOT EXISTS`).
+2. `npm run cf:deploy`. Nothing to configure: the OAuth issuer is
+   `BETTER_AUTH_URL`, consent tokens are signed with `BETTER_AUTH_SECRET`, and
+   `ALLOWED_EMAILS` gates who can connect.
+3. Check, from anywhere:
+
+```sh
+curl -s https://polarch.day/.well-known/oauth-protected-resource   # {"resource":"https://polarch.day/mcp",…}
+curl -si -X POST https://polarch.day/mcp -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'                     # 401 + WWW-Authenticate: Bearer resource_metadata=…
+```
+
+### Connecting an assistant
+
+Add Polarch as a custom connector / MCP server with the URL
+`https://polarch.day/mcp` (Settings → Connectors in Claude and ChatGPT; for
+ChatGPT turn on developer mode first). The assistant opens Polarch's consent
+page; sign in with your magic link or Google, read what it asks for, and
+approve. In Claude Code: `claude mcp add --transport http polarch https://polarch.day/mcp`,
+then `/mcp` to sign in.
+
+The consent page lets you **narrow to read-only**, and has an unticked box to
+**also give it the people records** (`people:read`, plus `people:write` if it
+may make changes). No app gets those by asking for nothing: the default scope
+is `agenda:read agenda:write`. The name an app shows is self-reported and
+unverified, so the page always shows where it will send you back to
+(`claude.ai`, `chatgpt.com`); if that isn't the app you meant to connect, deny
+it.
+
+**A bot that takes a URL and a key** (Grokbot, a script, xAI's remote MCP
+tool): Settings → Connected apps → **Make a token**. Name it, choose whether it
+may make changes and whether it gets the people records, and copy the token
+(shown once; only its SHA-256 is stored). Give the bot the URL
+`https://polarch.day/mcp` and the header `Authorization: Bearer <token>`. A
+token lasts a year, lists and is deleted like any connected app, and at most
+10 can be live per user. (`POST /api/mcp/tokens`, signed-in session, same
+origin.)
+
+### What an assistant can and cannot do
+
+| Scope | Can |
+|---|---|
+| `agenda:read` | List upcoming occurrences across meetings with readiness and how far ahead each is planned; meetings, agendas, the Plan-ahead board, ideas, follow-ups, arcs, tags, past points; people's **names and roles** |
+| `agenda:write` | Add, edit (talking points, sharing, privacy), tag, move, park, cover, roll forward, delete topics; follow-ups; skip, move, restore, add a week; set a meeting's point and *append* to prep notes; create a meeting; sections, rhythm, coverage targets; create, edit, recolour, reorder, delete tags; arcs |
+| `people:read` | Everything kept about a person, team or manager (health, prayer, assessments, how-to-lead, leading-up, notes, wins, goals, prayer log, what's known, fixtures), your own profile, past write-ups and shared notes, transcripts (only when asked), the glossary |
+| `people:write` | Add people, teams and managers; update their profiles, health reads and prayer; add notes; add or edit wins, goals, team actions, prayer entries, known items, fixtures, glossary terms; delete those records |
+
+Never, with any scope: delete a meeting, person or team; replace written
+session notes (append-only); read photos or chats; reach another user's data.
+
+Without `people:*`, a connection is not even shown those tools, and
+`worker/src/mcp/workspace.ts` never selects those columns for the agenda tools.
+`worker/src/mcp/mcp.check.ts` plants sentinel strings in every private field
+and fails if any tool output reaches an agenda-only connection with one; it
+also checks a `people:*` connection gets them back. The consent text and the
+connection instructions make the same promise, so keep all three true
+together.
+
+**Shared meetings.** A topic placed on a week of a meeting you've shared, or an
+idea marked `shared`, is visible to the person you shared it with unless it is
+`private`. Write tools
+return a `warnings` entry naming who will see it.
+
+### Undo
+
+Every write returns a `change_id`. `list_changes` shows them and `undo_change`
+reverses one: updates are set back column by column, creations deleted,
+deletions re-inserted whole. It is **refused, never forced**, if anything the
+change touched was edited since (including by you in the app) or if a later
+change touched the same rows. The journal holds copies of the rows a change
+touched, so it is pruned to the newest 200 entries / 30 days per user and is
+cleared when a workspace is wiped or replaced (`DELETE`/`PUT /api/data`).
+
+### How the web app sees it
+
+An assistant writes row by row, like a third device. An open tab merges what it
+changed the next time it refreshes (on focus, and on a slow timer): rows you
+didn't touch update in place; a row both of you edited keeps your version.
+
+### Limits and lifetimes
+
+- `/mcp`: 120 calls a minute and 40 writes a minute per user. Tool results over
+  60,000 characters are refused with advice to ask for less.
+- OAuth: registration 20 an hour per IP (and a cap on stored clients), token and
+  authorize 60 a minute per IP. Shared egress IPs from an assistant vendor could
+  hit these under heavy use; they are in `worker/src/oauth/constants.ts`.
+- Requests with no or an invalid token are not rate limited inside the Worker
+  (a bad token costs one indexed lookup). If `/mcp` or `/oauth/*` sees abuse, add
+  a Cloudflare rate-limiting rule for those paths.
+- Access token 1 hour, refresh token 30 days, a connection 180 days at most
+  (then the app asks you to approve again). Codes live 5 minutes and work once.
+  A personal token lives a year and is not refreshable.
+- Tokens are stored only as SHA-256 hashes. Removing someone from
+  `ALLOWED_EMAILS` cuts their MCP access on the next call.
+
+### Operating it
+
+- **Disconnect**: Settings → Connected apps → Disconnect (or Delete, for a
+  personal token). Every token of that app stops immediately.
+  (`GET`/`DELETE /api/mcp/connections`.)
+- **"Reconnect the app" after a refresh**: a refresh token is single-use, and
+  presenting a used one revokes the whole connection (theft protection). If the
+  response to a refresh is lost in transit, the retry looks like reuse. There is
+  no grace window; the app just asks you to approve once more.
+- **See what an assistant did**: `SELECT created_at, tool, summary, undone_at FROM mcp_changes WHERE user_id = '<id>' ORDER BY created_at DESC LIMIT 20;`
+- **Errors**: tool failures log only the tool name, error class and SQLSTATE
+  (`mcp: move_topics failed Error 40001`), never a message that could quote a row.
+
+### Rollback
+
+- Disable the endpoint: `wrangler rollback <previous version id>`. The tables
+  can stay.
+- `worker/schema/rollback/007_mcp_changes.sql` drops the undo journal (undo
+  history is lost; data is untouched).
+- `worker/schema/rollback/006_mcp_oauth.sql` drops the OAuth tables and so
+  **disconnects every connected app**. Do not run it casually.
+
+### Tests
+
+`npm run test:mcp` (protocol, every tool, privacy sweep, undo round trips,
+isolation, limits; plus the whole OAuth → `/mcp` path through the real `app`),
+`npm run test:oauth` (the authorization server), `npm run test:agenda` (the pure
+agenda rules in `src/lib/agendaOps.ts`).

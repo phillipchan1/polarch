@@ -250,6 +250,22 @@ text matches (prefix > word-start > mid-word > initials), which field matched
 record is, and how recently you opened it. That last one is why `m` puts *your*
 Meghan above three M-names you've never touched.
 
+## Plan with Claude or ChatGPT (MCP)
+
+Polarch is an [MCP](https://modelcontextprotocol.io) server at `/mcp`. Connect
+Claude or ChatGPT (or make a token in Settings for a bot that takes a URL and a
+key) and ask it what's coming up this week, to plan the next meeting, file and
+tag ideas, spread what's waiting across the coming weeks, skip a week, start an
+arc for a book, or close out a meeting. It reads and rearranges the same agendas
+you do, a row at a time, and every change can be undone. By default it sees
+names, roles and your agendas; your health, prayer and assessment reads, notes
+and transcripts only if you tick the box for them. Setup, what it can and can't
+do, and the deploy order are in [RUNBOOK.md](RUNBOOK.md#connecting-claude-and-chatgpt-mcp).
+
+The pieces: `worker/src/mcp/` (protocol, tools, undo journal),
+`worker/src/oauth/` (the sign-in that lets an assistant connect), and
+`src/lib/agendaOps.ts` (the agenda rules, as pure functions).
+
 ## Stack & structure
 
 React + TypeScript + Vite · Tailwind CSS 4 (light/dark) · Zustand · React Router · React Flow (`@xyflow/react`) · Cloudflare Workers + Neon + Better Auth. See [RUNBOOK.md](RUNBOOK.md).

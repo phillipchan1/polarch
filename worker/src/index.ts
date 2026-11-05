@@ -16,6 +16,9 @@ import {
 } from "./transcribe.ts";
 import type { Env } from "./env.ts";
 import { authOf, finishRequest, sqlOf, type WorkerContext, type WorkerVars } from "./request.ts";
+import { mcpApp } from "./mcp/routes.ts";
+import { clearJournal } from "./mcp/workspace.ts";
+import { oauthApp } from "./oauth/oauth.ts";
 import { stripGetSessionToken } from "./sessionBody.ts";
 import { bookQuery, chaptersFor, searchBooks, workId } from "./books.ts";
 import { applySync, loadTables, wipeUser } from "./store.ts";
@@ -108,6 +111,25 @@ app.all("/api/auth/*", async (c) => {
 app.options("/api/*", () => new Response("ok", { headers: API_CORS }));
 app.options("/functions/*", () => new Response("ok", { headers: API_CORS }));
 
+// The OAuth server and the MCP endpoint (RUNBOOK.md, "Connecting Claude and
+// ChatGPT"). They own /.well-known/oauth-*, /oauth/*, /api/mcp/connections and
+// /mcp, so they mount ahead of the /api/* and asset fallbacks below.
+app.route("/", oauthApp);
+app.route("/", mcpApp);
+
+/**
+ * What an assistant changed is journaled with copies of the rows it touched.
+ * Wiping or replacing the workspace must not leave those behind. Best effort:
+ * a missing table (schema 007 not applied yet) must never break a reset.
+ */
+async function forgetMcpChanges(c: WorkerContext, userId: string): Promise<void> {
+  try {
+    await clearJournal(sqlOf(c), userId);
+  } catch (err) {
+    console.error("mcp journal clear failed", err instanceof Error ? err.name : typeof err);
+  }
+}
+
 app.get("/api/data", async (c) => {
   const user = await requireUser(c);
   if (!user) return json({ error: "not authenticated" }, 401);
@@ -135,6 +157,7 @@ app.put("/api/data", async (c) => {
     const message = err instanceof Error ? err.message : "write failed";
     return json({ error: message }, 400);
   }
+  await forgetMcpChanges(c, user.id);
   return json({ ok: true });
 });
 
@@ -165,6 +188,7 @@ app.delete("/api/data", async (c) => {
   const user = await requireUser(c);
   if (!user) return json({ error: "not authenticated" }, 401);
   await wipeUser(sqlOf(c), user.id, { shares: true });
+  await forgetMcpChanges(c, user.id);
   return json({ ok: true });
 });
 

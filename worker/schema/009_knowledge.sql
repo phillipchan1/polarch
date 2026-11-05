@@ -1,7 +1,8 @@
 -- What Polarch learns as meetings happen: a glossary taught by transcript
 -- corrections, fixtures (the standing things a team does), and what's known
--- about each person and team. Owner-only: none of it is shared or offered to
--- a connected assistant.
+-- about each person and team. Owner-only: never on a shared page, and offered
+-- to a connected assistant only when it was given the people records
+-- (`people:read`).
 --
 -- Apply before deploying a Worker that knows these tables: the Worker reads
 -- every allowlisted table on load, and a missing one fails the whole load.

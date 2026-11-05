@@ -3,6 +3,7 @@ import { useStore } from "../store/useStore";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { Modal } from "./ui";
 import { Button } from "@/components/base/buttons/button";
+import { ConnectedApps } from "./ConnectedApps";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const userEmail = useStore((s) => s.userEmail);
@@ -56,6 +57,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           </Button>
           {error && <p className="text-xs text-red-500">{error}</p>}
         </section>
+
+        <ConnectedApps />
 
         <section className="space-y-3">
           <h3 className="text-sm font-medium text-stone-800 dark:text-stone-100">

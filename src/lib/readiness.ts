@@ -34,7 +34,7 @@ import type {
   Topic,
   TrackedMeeting,
 } from "../types";
-import { trackerName } from "./tracker";
+import { trackerName } from "./tracker.ts";
 
 export type ReadinessState =
   /** Tracked, but nothing is expected and nothing is booked. No guilt. */
