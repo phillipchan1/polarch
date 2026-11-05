@@ -17,7 +17,7 @@
  *    prayer and assessments are never selected.
  */
 import type { Sql } from "../db.ts";
-import { deleteKeys, upsertRows, type Row } from "../store.ts";
+import { decodeJson, deleteKeys, upsertRows, type Row } from "../store.ts";
 import { JSON_COLUMNS, TABLE_COLUMNS, TEXT_ARRAY_COLUMNS, type TableName } from "../tables.ts";
 import type { AgendaState } from "../../../src/lib/agendaOps.ts";
 import type {
@@ -495,7 +495,8 @@ export function stable(v: unknown): string {
 
 function serializeValue(column: string, value: unknown): unknown {
   const v = value === undefined ? null : value;
-  if (JSON_COLUMNS.has(column)) return v === null ? null : typeof v === "string" ? v : JSON.stringify(v);
+  // postgres.js encodes json/jsonb parameters itself; text here was stored as a JSON string.
+  if (JSON_COLUMNS.has(column)) return v === null ? null : decodeJson(v);
   if (TEXT_ARRAY_COLUMNS.has(column)) return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
   if (column === "is_private" || column === "is_shared") return v === true;
   return v;
@@ -659,7 +660,7 @@ export async function commitPlan(
     }
     await tx.unsafe(
       `INSERT INTO "mcp_changes" (id, user_id, client_id, tool, summary, changes) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [changeId, userId, meta.clientId, meta.tool, meta.summary.slice(0, 300), JSON.stringify(journal)],
+      [changeId, userId, meta.clientId, meta.tool, meta.summary.slice(0, 300), journal as never],
     );
     await tx.unsafe(
       `DELETE FROM "mcp_changes" WHERE user_id = $1 AND (

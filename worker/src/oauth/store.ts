@@ -98,7 +98,7 @@ export async function registerClient(
     sql,
     `INSERT INTO public.oauth_clients (client_id, client_name, redirect_uris, created_at)
      VALUES ($1, $2, $3::jsonb, $4::timestamptz)`,
-    [client.clientId, client.clientName, JSON.stringify(client.redirectUris), iso(now)],
+    [client.clientId, client.clientName, client.redirectUris, iso(now)],
   );
   return true;
 }

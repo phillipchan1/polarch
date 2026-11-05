@@ -1,11 +1,25 @@
 import { PGlite } from "@electric-sql/pglite";
 import postgres from "postgres";
 
+/**
+ * postgres.js describes each statement, learns which parameters are json/jsonb,
+ * and runs every such value through JSON.stringify, strings included. PGlite
+ * passes a string through untouched, so a check here once stored a
+ * pre-stringified value as an array while production stored it as a JSON string
+ * the app could not read. Serialize the way production does.
+ */
+const AS_POSTGRES_JS = {
+  serializers: {
+    114: (x: unknown) => JSON.stringify(x),
+    3802: (x: unknown) => JSON.stringify(x),
+  },
+};
+
 /** Wrap PGlite so postgres.js-style `sql.unsafe` and `sql.begin` work in Node checks. */
 export function pgliteAsSql(db: PGlite): postgres.Sql {
   let self: postgres.Sql;
   const unsafe = async (text: string, params: unknown[] = []) => {
-    const result = await db.query(text, params as never[]);
+    const result = await db.query(text, params as never[], AS_POSTGRES_JS);
     return result.rows as never;
   };
   // PGlite is one connection, so BEGIN … COMMIT here is the same transaction

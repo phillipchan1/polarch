@@ -44,12 +44,33 @@ const PRESERVE_IF_ABSENT = new Set(["is_private", "is_shared", "raised_by", "own
 const COVER_URL =
   /^https:\/\/(?:covers\.openlibrary\.org\/b\/id\/\d{1,12}-[SML]\.jpg|is\d{1,2}-ssl\.mzstatic\.com\/image\/thumb\/[A-Za-z0-9._\-/]{1,400}\/\d{2,4}x\d{2,4}bb\.(?:jpg|png))$/;
 
+/**
+ * The value a json/jsonb parameter should carry: the decoded value, never its
+ * text. postgres.js JSON.stringifies every json/jsonb parameter itself, so
+ * handing it text stored a JSON *string* — a meeting's sections came back as
+ * one string the app could not read, and the next save wrote them away.
+ *
+ * Text that is JSON (an older tab sending back a row it read before this fix,
+ * possibly encoded twice) is decoded until it is not.
+ */
+export function decodeJson(value: unknown): unknown {
+  let v = value;
+  for (let i = 0; i < 4 && typeof v === "string"; i++) {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      break;
+    }
+  }
+  return v;
+}
+
 function serialize(column: string, value: unknown): unknown {
   if (JSON_COLUMNS.has(column)) {
     if (value === undefined || value === null) {
-      return EMPTY_JSON_ARRAY_COLUMNS.has(column) ? JSON.stringify([]) : null;
+      return EMPTY_JSON_ARRAY_COLUMNS.has(column) ? [] : null;
     }
-    return typeof value === "string" ? value : JSON.stringify(value);
+    return decodeJson(value);
   }
   if (column === "is_private") return value === true;
   if (column === "cover_url") return typeof value === "string" && COVER_URL.test(value) ? value : null;

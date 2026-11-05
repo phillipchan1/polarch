@@ -105,7 +105,18 @@ const nn = <T>(v: T | undefined | null): T | null => (v === undefined ? null : v
 const opt = <T>(v: T | null | undefined): T | undefined =>
   v === null || v === undefined ? undefined : v;
 
-function parseCoverage(v: unknown): CoverageTarget[] | undefined {
+/**
+ * A jsonb value as stored. Until the Worker stopped encoding json parameters
+ * twice, a save stored them as a JSON *string* of the value; those rows arrive
+ * here as strings, and reading them as "nothing" made a meeting's sections
+ * vanish (and the next save erase them for good). Decode them instead.
+ */
+function fromJson(v: unknown): unknown {
+  return typeof v === "string" ? safeJson(v) : v;
+}
+
+function parseCoverage(raw: unknown): CoverageTarget[] | undefined {
+  const v = fromJson(raw);
   if (!Array.isArray(v)) return undefined;
   const out = v.filter(
     (t): t is CoverageTarget =>
@@ -116,7 +127,8 @@ function parseCoverage(v: unknown): CoverageTarget[] | undefined {
   return out.length ? out : undefined;
 }
 
-function parsePoints(v: unknown): TopicPoint[] | undefined {
+function parsePoints(raw: unknown): TopicPoint[] | undefined {
+  const v = fromJson(raw);
   if (!Array.isArray(v)) return undefined;
   const out = v
     .filter((p): p is TopicPoint => Boolean(p) && typeof (p as TopicPoint).text === "string")
@@ -134,7 +146,7 @@ function strArray(v: unknown): string[] {
  * array — which arrives here as a string; `.map` on that crashed the meeting.
  */
 function jsonArray(v: unknown): unknown[] {
-  const raw = typeof v === "string" ? safeJson(v) : v;
+  const raw = fromJson(v);
   return Array.isArray(raw) ? raw : [];
 }
 
@@ -143,7 +155,7 @@ function jsonStrArray(v: unknown): string[] {
 }
 
 function parseSteps(v: unknown): ArcStep[] {
-  const raw = typeof v === "string" ? safeJson(v) : v;
+  const raw = fromJson(v);
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
@@ -172,7 +184,8 @@ function safeJson(v: string): unknown {
   }
 }
 
-export function parseCurriculum(v: unknown): CurriculumSlot[] | undefined {
+export function parseCurriculum(raw: unknown): CurriculumSlot[] | undefined {
+  const v = fromJson(raw);
   if (!Array.isArray(v) || v.length === 0) return undefined;
   const slots: CurriculumSlot[] = [];
   for (const item of v) {
@@ -315,8 +328,8 @@ const map = {
       domainId: opt(r.domain_id as string | null),
       photo: opt(r.photo as string | null),
       noMeeting: opt(r.no_meeting as boolean | null),
-      prayer: opt(r.prayer as Prayer | null),
-      leadUp: opt(r.lead_up as LeadUpProfile | null),
+      prayer: opt(fromJson(r.prayer) as Prayer | null),
+      leadUp: opt(fromJson(r.lead_up) as LeadUpProfile | null),
     }),
   },
   teams: {
@@ -344,8 +357,8 @@ const map = {
       name: r.name as string,
       capacityId: r.capacity_id as string,
       domainId: opt(r.domain_id as string | null),
-      health: opt(r.health as Health | null),
-      prayer: opt(r.prayer as Prayer | null),
+      health: opt(fromJson(r.health) as Health | null),
+      prayer: opt(fromJson(r.prayer) as Prayer | null),
       description: opt(r.description as string | null),
       purpose: opt(r.purpose as string | null),
       cadence: opt(r.cadence as string | null),
@@ -386,7 +399,7 @@ const map = {
       const top5 = jsonStrArray(r.clifton_top5);
       const enneagram = opt(r.enneagram as string | null);
       const mbti = opt(r.mbti as string | null);
-      const leadUp = opt(r.lead_up as LeadUpProfile | null);
+      const leadUp = opt(fromJson(r.lead_up) as LeadUpProfile | null);
       const customModalities = jsonArray(r.custom_modalities) as CustomModality[];
       return {
         id: r.id as string,
@@ -395,8 +408,8 @@ const map = {
         name: r.name as string,
         role: opt(r.role as string | null),
         photo: opt(r.photo as string | null),
-        health: opt(r.health as Health | null),
-        prayer: opt(r.prayer as Prayer | null),
+        health: opt(fromJson(r.health) as Health | null),
+        prayer: opt(fromJson(r.prayer) as Prayer | null),
         relationshipType: opt(r.relationship_type as string | null),
         email: opt(r.email as string | null),
         noMeeting: opt(r.no_meeting as boolean | null),
@@ -1026,7 +1039,7 @@ export async function loadAll(userId: string): Promise<PersistedData | null> {
     teamGoals: teamGoals.map(map.teamGoals.fromRow),
     teamNotes: teamNotes.map(map.teamNotes.fromRow),
     chats: Object.fromEntries(
-      chats.map((r) => [r.chat_key as string, (r.messages as ChatMessage[]) ?? []])
+      chats.map((r) => [r.chat_key as string, (jsonArray(r.messages) as ChatMessage[])])
     ),
     nodePositions: Object.fromEntries(
       positions.map((r) => [

@@ -38,6 +38,12 @@ ok(reloaded !== undefined && Object.keys(reloaded[4]).join() === "id,label", "no
 // Save → load → save is a fixed point, so a later save can't erase anything.
 ok(same(parseCurriculum(reloaded), saved), "loading twice changes nothing");
 
+// A row saved while the Worker encoded json twice holds the sections as one
+// JSON string. Reading that as "no sections" hid them, and the next save
+// wrote null over them.
+ok(same(parseCurriculum(JSON.stringify(saved)), saved), "sections stored as a JSON string still read back");
+ok(parseCurriculum("not json") === undefined, "a string that isn't JSON is no sections, not a crash");
+
 // --- rows from before tags and minutes existed -------------------------------
 const legacy = [
   { id: "a", label: "One" },
