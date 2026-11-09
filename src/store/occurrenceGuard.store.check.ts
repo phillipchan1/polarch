@@ -104,3 +104,5 @@ if (fails.length) {
   process.exit(1);
 }
 console.log(`occurrenceGuard.store.check: ${checks} checks passed`);
+// useStore starts a poller and a hanging auth fetch; don't keep the process alive.
+process.exit(0);

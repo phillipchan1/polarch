@@ -52,14 +52,23 @@ function importMetaDev(): boolean | undefined {
   return env?.DEV;
 }
 
+type FlagStorage = { getItem(key: string): string | null };
+
 export type FlagRuntime = {
   /** Vite `import.meta.env.DEV`. Production compiles this to `false`. */
   dev?: boolean;
   /** `window.location.search`. */
   search?: string;
   /** `window.localStorage`. */
-  storage?: Pick<Storage, "getItem"> | null;
+  storage?: FlagStorage | null;
 };
+
+function browserWindow(): { search?: string; storage?: FlagStorage } {
+  const w = (globalThis as { window?: { location?: { search?: string }; localStorage?: FlagStorage } })
+    .window;
+  if (!w) return {};
+  return { search: w.location?.search, storage: w.localStorage };
+}
 
 /**
  * Read a flag. `overrides` is for tests: pass `{ quickClose: true }` to
@@ -100,9 +109,8 @@ export function flagsFromQuery(search: string): Partial<Record<FlagName, boolean
 }
 
 function runtimeOverride(name: FlagName, runtime?: FlagRuntime): boolean | undefined {
-  const search =
-    runtime?.search ??
-    (typeof window !== "undefined" ? window.location?.search : undefined);
+  const browser = browserWindow();
+  const search = runtime?.search ?? browser.search;
   if (search !== undefined) {
     try {
       const fromQuery = flagsFromQuery(search);
@@ -113,11 +121,7 @@ function runtimeOverride(name: FlagName, runtime?: FlagRuntime): boolean | undef
   }
   try {
     const storage =
-      runtime && "storage" in runtime
-        ? runtime.storage
-        : typeof window !== "undefined"
-          ? window.localStorage
-          : null;
+      runtime && "storage" in runtime ? runtime.storage : (browser.storage ?? null);
     const raw = storage?.getItem(FLAG_STORAGE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as unknown;
