@@ -133,7 +133,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   );
 
   // Keep tapping Book through the week. Thursday reuses this week; Fri/Sat
-  // snap onto this Thursday (nearest) rather than stacking consecutive days.
+  // snap forward to next Thursday rather than stacking consecutive days or
+  // landing on this (already past-relative-to-Friday) Thursday.
   let cur = on.sessions;
   for (const day of ["2026-10-08", "2026-10-09", "2026-10-10"]) {
     const next = book(cur, day, true, weekly, false, day);
@@ -141,8 +142,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   }
   ok(!dates(cur).some((d) => d === "2026-10-07" || d === "2026-10-09" || d === "2026-10-10"), "flag on: Wed/Fri/Sat never become their own rows");
   ok(
-    dates(cur).join() === "2026-10-06,2026-10-08",
-    "flag on: leftover Tuesday + this Thursday, no consecutive-day run"
+    dates(cur).join() === "2026-10-06,2026-10-08,2026-10-15",
+    "flag on: leftover Tuesday + this Thursday + next Thursday, no consecutive-day run"
   );
 }
 
@@ -154,8 +155,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   ok(dates(day1.sessions).join() === "2026-10-06", "flag on: a weekly meeting with no history may still book today");
   const day2 = book(day1.sessions, "2026-10-07", true, unanchored, false, "2026-10-07");
   ok(
-    dates(day2.sessions).join() === "2026-10-06" && day2.sessionId === day1.sessionId,
-    "flag on: the next day's Book folds into yesterday instead of stacking Tuesday"
+    dates(day2.sessions).join() === "2026-10-06,2026-10-13",
+    "flag on: the next day's Book snaps a week out instead of stacking Tuesday"
   );
 }
 
@@ -270,8 +271,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   n = 0;
   const wed = book(last, "2026-10-28", true, weekly, false, "2026-11-09");
   ok(
-    dates(wed.sessions).join() === "2026-10-22,2026-10-29" && !wed.sessions.some((o) => o.date > "2026-11-09"),
-    "flag on: a past off-rhythm Wednesday snaps to that week's Thursday, never after today"
+    dates(wed.sessions).join() === "2026-10-22,2026-11-12",
+    "flag on: a past off-rhythm Wednesday snaps forward onto or after today, not into the past"
   );
 
   n = 0;
@@ -280,6 +281,32 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
     dates(monday.sessions).join() === "2026-10-22,2026-11-12",
     "flag on: off-rhythm today still snaps to this week's Thursday"
   );
+}
+
+// ── flag off: datetime leftovers do not match YYYY-MM-DD (master) ────────
+{
+  n = 0;
+  const messy: Session[] = [
+    { id: "iso", meetingId: weekly.id, date: "2026-11-12T00:00:00.000Z" },
+  ];
+  const placed = place(messy, "2026-11-12", false);
+  ok(
+    placed.sessions.length === 2 && placed.sessionId !== "iso",
+    "flag off: a datetime-stored week does not match YYYY-MM-DD, so placement inserts (master)"
+  );
+}
+
+// ── flag on: Fri/Sat/Sun book forward, never onto last Thursday ──────────
+{
+  const last = [session("2026-11-05")];
+  for (const day of ["2026-11-13", "2026-11-14", "2026-11-15"] as const) {
+    n = 0;
+    const booked = book(last, day, true, weekly, false, day);
+    ok(
+      dates(booked.sessions).join() === "2026-11-05,2026-11-19",
+      `flag on: booking today ${day} snaps forward to next Thursday Nov 19, not back to Nov 12`
+    );
+  }
 }
 
 if (fails.length) {

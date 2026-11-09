@@ -76,6 +76,18 @@ setFlagForTests("singleOccurrenceGuard", undefined);
   ok(sameDay().length === 1 && sameDay()[0].id === "have", "flag off: captureTopics into an existing week reuses it (master)");
 }
 
+{
+  reset(
+    [{ id: "iso", meetingId: meeting.id, date: "2026-11-12T00:00:00.000Z" }],
+    [topic("a")]
+  );
+  useStore.getState().placeTopicAt("a", projected, 0);
+  ok(
+    useStore.getState().sessions.length === 2,
+    "flag off: a datetime-stored week does not match YYYY-MM-DD, so placeTopicAt inserts (master)"
+  );
+}
+
 setFlagForTests("singleOccurrenceGuard", true);
 
 {
@@ -94,6 +106,19 @@ setFlagForTests("singleOccurrenceGuard", true);
   reset([{ id: "have", meetingId: meeting.id, date: PROJECTED }], []);
   useStore.getState().captureTopics("one\ntwo", projected, 0);
   ok(sameDay().length === 1, "flag on: captureTopics into an existing week makes 1 meeting");
+}
+
+{
+  const last: Session = { id: "nov5", meetingId: meeting.id, date: "2026-11-05" };
+  for (const day of ["2026-11-13", "2026-11-14", "2026-11-15"] as const) {
+    reset([last], []);
+    useStore.getState().addSession({ meetingId: meeting.id, date: day });
+    const landed = useStore.getState().sessions.map((o) => o.date).sort();
+    ok(
+      landed.join() === "2026-11-05,2026-11-19",
+      `flag on: addSession(${day}) snaps forward to Nov 19, not back to Nov 12`
+    );
+  }
 }
 
 setFlagForTests("singleOccurrenceGuard", undefined);

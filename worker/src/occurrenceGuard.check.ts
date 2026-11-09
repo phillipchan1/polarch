@@ -145,6 +145,30 @@ ok(!after.includes("2026-10-07"), "flag on: Wednesday is not inserted");
 ok(after.includes("2026-10-08") && after.includes("2026-10-06"), "flag on: the book snaps onto this week's Thursday");
 ok(guarded.sessionId !== "tue", "flag on: Thursday is a new occurrence, not Tuesday's leftover");
 
+// ── flag on: Fri/Sat/Sun guest topics snap forward, never to last Thursday
+await sql.unsafe(`DELETE FROM topics WHERE user_id = $1 AND meeting_id = $2`, [phil, weekly.id]);
+await sql.unsafe(`DELETE FROM one_on_ones WHERE user_id = $1 AND meeting_id = $2`, [phil, weekly.id]);
+
+for (const [label, iso] of [
+  ["Fri", "2026-11-13"],
+  ["Sat", "2026-11-14"],
+  ["Sun", "2026-11-15"],
+] as const) {
+  const guest = await guestAddTopic(
+    sql,
+    member!,
+    { text: `${label} topic`, date: iso },
+    new Date(`${iso}T16:00:00Z`),
+    { guard: true },
+  );
+  const days = await sessionDates();
+  ok(!days.includes("2026-11-12") && !days.includes(iso), `flag on: ${label} Nov guest topic does not land on Nov 12 or ${iso}`);
+  ok(days.includes("2026-11-19"), `flag on: ${label} guest topic snaps forward to next Thursday Nov 19`);
+  ok(guest.sessionId !== "tue", `flag on: ${label} booked a new occurrence`);
+  await sql.unsafe(`DELETE FROM topics WHERE user_id = $1 AND id = $2`, [phil, guest.id]);
+  await sql.unsafe(`DELETE FROM one_on_ones WHERE user_id = $1 AND id = $2`, [phil, guest.sessionId]);
+}
+
 if (fails.length) {
   console.error(`occurrenceGuard.check: ${fails.length}/${checks} failed`);
   for (const f of fails) console.error("  -", f);
