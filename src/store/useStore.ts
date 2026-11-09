@@ -78,6 +78,10 @@ import {
   plannedSlots,
 } from "../lib/topics";
 import {
+  applyQuickClose,
+  type TopicDisposition,
+} from "../lib/quickClose";
+import {
   capUp,
   seedActions,
   seedCapacities,
@@ -168,6 +172,8 @@ export type ModalState =
   /** Capture anywhere: a topic, or a person, team or leader. `draft` prefills
       the field — "@sarah " when capture starts from Sarah's meeting. */
   | { kind: "capture"; draft?: string }
+  /** File an unrecorded occurrence. Only opened when `quickClose` is on. */
+  | { kind: "quickClose"; sessionId: string }
   | null;
 
 type UIState = {
@@ -572,6 +578,16 @@ type Store = PersistedData &
     ) => void;
     /** "We talked about it." Passing false puts it back on the board. */
     coverTopic: (id: string, covered?: boolean) => void;
+    /**
+     * File an unrecorded occurrence: Covered / Next week / Park per topic, and
+     * a short write-up so the meeting leaves Loose end. The `quickClose` flag
+     * gates the sheet that calls this; the action itself is the same ops.
+     */
+    quickCloseMeeting: (
+      sessionId: string,
+      dispositions: Record<string, TopicDisposition>,
+      notes?: string
+    ) => void;
     /**
      * Push a topic into a later occurrence and count it. Omit the session to
      * drop it back to the backlog — still a push, still counted.
@@ -2822,6 +2838,25 @@ export const useStore = create<Store>((set, get) => ({
           : t
       ),
     })),
+  quickCloseMeeting: (sessionId, dispositions, notes) =>
+    set((s) => {
+      const closed = applyQuickClose(
+        {
+          meetings: s.meetings,
+          sessions: s.sessions,
+          topics: s.topics,
+          followUps: s.followUps,
+          tags: s.tags,
+        },
+        { uid, today: todayISO() },
+        { sessionId, dispositions, notes }
+      );
+      return {
+        meetings: closed.meetings,
+        sessions: closed.sessions,
+        topics: closed.topics,
+      };
+    }),
   rollTopic: (id, sessionId) =>
     set((s) => {
       const topic = s.topics.find((t) => t.id === id);

@@ -21,6 +21,8 @@ import { shortSincePrayed } from "@/lib/prayer";
 import { nextArcSteps, stepTag } from "@/lib/arcs";
 import { ensureSessionId, plannedSlots } from "@/lib/topics";
 import { startMeeting } from "@/lib/liveMeeting";
+import { flagOn } from "@/lib/flags";
+import { quickCloseAvailable } from "@/lib/quickClose";
 import { ArrowRight, Lightbulb02, Play } from "@untitledui/icons";
 import type { Arc, ArcStep, TrackedMeeting } from "@/types";
 import { Avatar } from "../Avatar";
@@ -173,10 +175,12 @@ function NextMove({ row }: { row: MeetingRow }) {
   const arcSteps = useArcSteps();
   const fix = useFix();
   const open = useOpen();
+  const openModal = useStore((s) => s.openModal);
   const r = row.reading;
   const check = r.checks.find((c) => !c.done);
   const subject = row.subject;
   const who = subject?.name ?? row.title;
+  const quickCloseId = quickCloseAvailable(flagOn("quickClose"), r);
 
   const headline =
     r.state === "drifting"
@@ -244,6 +248,15 @@ function NextMove({ row }: { row: MeetingRow }) {
         >
           {check ? FIX_ACTION[check.fix] : "Open the meeting"}
         </button>
+        {quickCloseId && (
+          <button
+            type="button"
+            onClick={() => openModal({ kind: "quickClose", sessionId: quickCloseId })}
+            className="inline-flex h-10 items-center rounded-[9px] border border-primary px-3.5 text-[14px] font-semibold text-primary transition-colors hover:bg-secondary"
+          >
+            Quick close
+          </button>
+        )}
         {cold && subject && (
           <button
             type="button"
@@ -304,7 +317,9 @@ function useStartToday() {
   };
 }
 
-function rowAction(row: MeetingRow): { label: string; check?: Check } | null {
+function rowAction(row: MeetingRow): { label: string; check?: Check; quickCloseId?: string } | null {
+  const quickCloseId = quickCloseAvailable(flagOn("quickClose"), row.reading);
+  if (quickCloseId) return { label: "Quick close", quickCloseId };
   const check = row.reading.checks.find((c) => !c.done);
   if (!check || row.reading.state === "ready" || row.reading.state === "resting") return null;
   return { label: FIX_ACTION[check.fix], check };
@@ -316,6 +331,7 @@ function ComingUp({ rows, nextWeek }: { rows: MeetingRow[]; nextWeek: MeetingRow
     arcSteps(meeting).map(({ arc, step }) => `${arc.title} · ${stepTag(arc, step)}`);
   const selectMeeting = useStore((s) => s.selectMeeting);
   const setTab = useStore((s) => s.setTab);
+  const openModal = useStore((s) => s.openModal);
   const fix = useFix();
   const startToday = useStartToday();
 
@@ -377,21 +393,45 @@ function ComingUp({ rows, nextWeek }: { rows: MeetingRow[]; nextWeek: MeetingRow
                 <span className="justify-self-end">
                   {/* On the day, the only thing left to do is have it. */}
                   {r.daysUntil === 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => startToday(row.meeting)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-teal-600 px-3 text-[13px] font-semibold whitespace-nowrap text-white transition-colors hover:bg-teal-700 touch:min-h-11 dark:bg-teal-500 dark:text-stone-950"
-                    >
-                      <Play aria-hidden className="size-3" />
-                      Start
-                    </button>
+                    action?.quickCloseId ? (
+                      <span className="flex flex-col items-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startToday(row.meeting)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-teal-600 px-3 text-[13px] font-semibold whitespace-nowrap text-white transition-colors hover:bg-teal-700 touch:min-h-11 dark:bg-teal-500 dark:text-stone-950"
+                        >
+                          <Play aria-hidden className="size-3" />
+                          Start
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openModal({ kind: "quickClose", sessionId: action.quickCloseId! })}
+                          className="text-[13px] font-semibold text-primary"
+                        >
+                          Quick close
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startToday(row.meeting)}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-teal-600 px-3 text-[13px] font-semibold whitespace-nowrap text-white transition-colors hover:bg-teal-700 touch:min-h-11 dark:bg-teal-500 dark:text-stone-950"
+                      >
+                        <Play aria-hidden className="size-3" />
+                        Start
+                      </button>
+                    )
                   ) : action ? (
                     // The ring already says what's missing; the fix only
                     // surfaces under the pointer. Fingers can't hover, so
                     // touch keeps it showing.
                     <button
                       type="button"
-                      onClick={() => fix(row, action.check)}
+                      onClick={() =>
+                        action.quickCloseId
+                          ? openModal({ kind: "quickClose", sessionId: action.quickCloseId })
+                          : fix(row, action.check)
+                      }
                       className="text-right text-[13px] font-semibold whitespace-nowrap text-primary transition-opacity duration-[var(--dur-quick)] hoverable:opacity-0 hoverable:group-hover:opacity-100 hoverable:focus-visible:opacity-100"
                     >
                       {action.label}

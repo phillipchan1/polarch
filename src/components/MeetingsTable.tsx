@@ -24,6 +24,8 @@ import { MeetingsSwitch } from "./shell/MeetingsSwitch";
 import { ChevronDown, Plus, SearchLg } from "@untitledui/icons";
 import { tableRowActivationProps } from "@/lib/rowActivation";
 import { useSearchShortcut } from "@/hooks/use-search-shortcut";
+import { flagOn } from "@/lib/flags";
+import { quickCloseAvailable } from "@/lib/quickClose";
 
 type SortKey = "next" | "name" | "runway" | "state";
 
@@ -60,7 +62,7 @@ const KIND_FILTERS: { label: string; value: "" | MeetingSubjectKind }[] = [
  * never met fold under "Not started" so they don't stand in the queue.
  */
 export function MeetingsTable() {
-  const { meetings, sessions, topics, people, teams, managers, selectMeeting } =
+  const { meetings, sessions, topics, people, teams, managers, selectMeeting, openModal } =
     useStore();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"" | MeetingSubjectKind>("");
@@ -231,7 +233,12 @@ export function MeetingsTable() {
                 date, a countdown and two counts on a phone. */}
             <ul className="flex flex-col gap-2 sm:hidden">
               {active.map((r) => (
-                <MeetingCard key={r.meeting.id} row={r} onOpen={() => selectMeeting(r.meeting.id)} />
+                <MeetingCard
+                  key={r.meeting.id}
+                  row={r}
+                  onOpen={() => selectMeeting(r.meeting.id)}
+                  onQuickClose={quickCloseFor(r, openModal)}
+                />
               ))}
               {dormant.length > 0 && (
                 <li>
@@ -240,7 +247,12 @@ export function MeetingsTable() {
               )}
               {showDormant &&
                 dormant.map((r) => (
-                  <MeetingCard key={r.meeting.id} row={r} onOpen={() => selectMeeting(r.meeting.id)} />
+                  <MeetingCard
+                    key={r.meeting.id}
+                    row={r}
+                    onOpen={() => selectMeeting(r.meeting.id)}
+                    onQuickClose={quickCloseFor(r, openModal)}
+                  />
                 ))}
             </ul>
 
@@ -265,7 +277,12 @@ export function MeetingsTable() {
                 </thead>
                 <tbody className="divide-y divide-secondary border-t border-secondary">
                   {active.map((r) => (
-                    <MeetingRow key={r.meeting.id} row={r} onOpen={() => selectMeeting(r.meeting.id)} />
+                    <MeetingRow
+                      key={r.meeting.id}
+                      row={r}
+                      onOpen={() => selectMeeting(r.meeting.id)}
+                      onQuickClose={quickCloseFor(r, openModal)}
+                    />
                   ))}
                   {dormant.length > 0 && (
                     <tr>
@@ -276,7 +293,12 @@ export function MeetingsTable() {
                   )}
                   {showDormant &&
                     dormant.map((r) => (
-                      <MeetingRow key={r.meeting.id} row={r} onOpen={() => selectMeeting(r.meeting.id)} />
+                      <MeetingRow
+                        key={r.meeting.id}
+                        row={r}
+                        onOpen={() => selectMeeting(r.meeting.id)}
+                        onQuickClose={quickCloseFor(r, openModal)}
+                      />
                     ))}
                 </tbody>
               </table>
@@ -288,9 +310,17 @@ export function MeetingsTable() {
   );
 }
 
-function MeetingCard({ row: r, onOpen }: { row: Row; onOpen: () => void }) {
+function MeetingCard({
+  row: r,
+  onOpen,
+  onQuickClose,
+}: {
+  row: Row;
+  onOpen: () => void;
+  onQuickClose?: () => void;
+}) {
   return (
-    <li>
+    <li className="flex flex-col gap-1.5">
       <button
         type="button"
         onClick={onOpen}
@@ -314,11 +344,28 @@ function MeetingCard({ row: r, onOpen }: { row: Row; onOpen: () => void }) {
           </div>
         )}
       </button>
+      {onQuickClose && (
+        <button
+          type="button"
+          onClick={onQuickClose}
+          className="self-end px-1 text-[13px] font-semibold text-primary"
+        >
+          Quick close
+        </button>
+      )}
     </li>
   );
 }
 
-function MeetingRow({ row: r, onOpen }: { row: Row; onOpen: () => void }) {
+function MeetingRow({
+  row: r,
+  onOpen,
+  onQuickClose,
+}: {
+  row: Row;
+  onOpen: () => void;
+  onQuickClose?: () => void;
+}) {
   return (
     <tr
       {...tableRowActivationProps(onOpen, { label: `Open ${r.title}` })}
@@ -350,9 +397,23 @@ function MeetingRow({ row: r, onOpen }: { row: Row; onOpen: () => void }) {
         </div>
       </td>
       <td className="px-4 py-2">
-        <span className={cx("inline-flex items-center gap-2 text-[13px] font-medium", STATE_TEXT[r.readiness.state])}>
-          <RhythmRing reading={r.readiness} size={18} />
-          {STATE_LABEL[r.readiness.state]}
+        <span className="inline-flex items-center gap-3">
+          <span className={cx("inline-flex items-center gap-2 text-[13px] font-medium", STATE_TEXT[r.readiness.state])}>
+            <RhythmRing reading={r.readiness} size={18} />
+            {STATE_LABEL[r.readiness.state]}
+          </span>
+          {onQuickClose && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickClose();
+              }}
+              className="text-[13px] font-semibold text-primary hover:underline"
+            >
+              Quick close
+            </button>
+          )}
         </span>
       </td>
     </tr>
@@ -389,6 +450,15 @@ function kindLabel(r: { meeting: { subjectKind: string; name?: string }; subject
   if (r.meeting.subjectKind === "person") return "1:1";
   if (r.meeting.subjectKind === "manager") return r.meeting.name ? `Check-in · ${r.subjectName ?? ""}` : "Check-in";
   return r.meeting.name ? (r.subjectName ?? "Team") : "Team meeting";
+}
+
+function quickCloseFor(
+  r: Row,
+  openModal: (modal: { kind: "quickClose"; sessionId: string }) => void,
+): (() => void) | undefined {
+  const sessionId = quickCloseAvailable(flagOn("quickClose"), r.readiness);
+  if (!sessionId) return undefined;
+  return () => openModal({ kind: "quickClose", sessionId });
 }
 
 function LooseBadge({ count }: { count: number }) {
