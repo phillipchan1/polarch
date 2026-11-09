@@ -78,14 +78,7 @@ import {
   plannedSlots,
 } from "../lib/topics";
 import { flagFromEnv, flagOn } from "../lib/flags";
-import { applyOccurrence } from "../lib/occurrenceGuard";
-
-function occurrenceGuardOn(): boolean {
-  return (
-    flagOn("singleOccurrenceGuard") ||
-    flagFromEnv(import.meta.env.VITE_SINGLE_OCCURRENCE_GUARD)
-  );
-}
+import { applyOccurrence, sameDateReuseFor } from "../lib/occurrenceGuard";
 import {
   applyQuickClose,
   type TopicDisposition,
@@ -742,6 +735,29 @@ type Store = PersistedData &
 const DATA_KEY = "data";
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+function occurrenceGuardOn(): boolean {
+  return (
+    flagOn("singleOccurrenceGuard") ||
+    flagFromEnv(import.meta.env.VITE_SINGLE_OCCURRENCE_GUARD)
+  );
+}
+
+function bookOccurrence(
+  sessions: Session[],
+  meeting: TrackedMeeting | undefined,
+  spec: Omit<Session, "id">,
+  topics: Topic[],
+  site: "addSession" | "placement"
+) {
+  const guard = occurrenceGuardOn();
+  return applyOccurrence(sessions, meeting, spec, uid, {
+    guard,
+    today: todayISO(),
+    topics,
+    reuseSameDate: sameDateReuseFor(site, guard),
+  });
+}
+
 /**
  * A topic's tags after it lands in `slotId` of `meetingId`, having left
  * `fromSlotId`. The row a card sits in *is* its tag on the planner, so moving
@@ -804,12 +820,12 @@ function placement(
     // commitment, so it shouldn't need a separate "schedule this" step.
     if (meetingId) {
       const meeting = s.meetings.find((m) => m.id === meetingId);
-      const booked = applyOccurrence(
+      const booked = bookOccurrence(
         sessions,
         meeting,
         { meetingId, date: target.date },
-        uid,
-        { guard: occurrenceGuardOn(), today: todayISO(), topics: s.topics }
+        s.topics,
+        "placement"
       );
       sessions = booked.sessions;
       sessionId = booked.sessionId;
@@ -2321,12 +2337,12 @@ export const useStore = create<Store>((set, get) => ({
         targetSession = target.sessionId;
       } else if (target?.kind === "projected" && target.meetingId) {
         const meeting = s.meetings.find((m) => m.id === target.meetingId);
-        const booked = applyOccurrence(
+        const booked = bookOccurrence(
           sessions,
           meeting,
           { meetingId: target.meetingId, date: target.date },
-          uid,
-          { guard: occurrenceGuardOn(), today: todayISO(), topics: s.topics }
+          s.topics,
+          "placement"
         );
         sessions = booked.sessions;
         targetSession = booked.sessionId;
@@ -3355,11 +3371,7 @@ export const useStore = create<Store>((set, get) => ({
     let sessionId = "";
     set((s) => {
       const meeting = s.meetings.find((m) => m.id === o.meetingId);
-      const booked = applyOccurrence(s.sessions, meeting, o, uid, {
-        guard: occurrenceGuardOn(),
-        today: todayISO(),
-        topics: s.topics,
-      });
+      const booked = bookOccurrence(s.sessions, meeting, o, s.topics, "addSession");
       sessionId = booked.sessionId;
       if (booked.sessions === s.sessions) return {};
       return { sessions: booked.sessions };

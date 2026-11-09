@@ -11,26 +11,42 @@
  *    `addSession({ date: todayISO() })` without asking the rhythm. A weekly
  *    1:1 then gains a session every day you tap Book (Meghan, Oct 6–10).
  *
- * MCP `ensureOccurrence` already refuses off-rhythm dates and reuses a live
- * row on the same day. `addExtraOccurrence` already reuses same-date. The
- * store's `addSession` and the guest `bookedOn` insert did neither.
+ * Call sites keep their master reuse rule when the flag is off:
  *
- * Behind `singleOccurrenceGuard` (off by default): fold same-meeting
- * same-date sessions, and snap an off-rhythm non-extra booking onto the next
- * rhythm date. One-offs (`kind: "extra"` / `add_extra_occurrence`) still land
- * on the day they were asked for.
+ * - `addSession`: never reuse (the original bug still reproduces).
+ * - placement / captureTopics: reuse any same-date row, including skipped,
+ *   so dropping three cards on a projected week still books it once.
+ * - extras: never reuse through this helper; `addExtraOccurrence` has its
+ *   own live-same-date fold on the store path.
+ *
+ * Behind `singleOccurrenceGuard`: fold a live same-date session, keep
+ * on-rhythm dates (including a missed past week), and snap only off-rhythm
+ * dates onto the nearest rhythm day relative to the intended date — never
+ * pulling a past log forward past today. One-offs still land on the day
+ * they were asked for.
  */
 import type { Session, Topic, TrackedMeeting } from "../types";
-import { nextOpenRhythmDate, sessionsFor } from "./readiness.ts";
-import { plannedSlots } from "./topics.ts";
+import {
+  addDays,
+  daysBetween,
+  lastRhythmDate,
+  projectFromLast,
+  sessionsFor,
+  takenSeriesDates,
+  weekdayUTC,
+} from "./readiness.ts";
 
 export type OccurrenceMeeting = Pick<
   TrackedMeeting,
   "id" | "rhythm" | "anchorWeekday" | "floorDays" | "nextDate"
 >;
 
+export type SameDateReuse = "none" | "any" | "live";
+
+export type OccurrenceSite = "addSession" | "placement" | "extra";
+
 export type OccurrencePlan = {
-  /** Reuse this live session instead of inserting. */
+  /** Reuse this session instead of inserting. */
   reuseId?: string;
   /** Date the new row should carry, when we are inserting. */
   date: string;
@@ -43,42 +59,123 @@ export function occurrenceDay(value: string): string {
   return ISO_DAY.test(value) ? value.slice(0, 10) : value;
 }
 
+/** Master's reuse rule for a write path, given whether the guard is on. */
+export function sameDateReuseFor(site: OccurrenceSite, guard: boolean): SameDateReuse {
+  if (site === "placement") return guard ? "live" : "any";
+  return guard ? "live" : "none";
+}
+
+function sessionOnDate(
+  sessions: Session[],
+  meetingId: string,
+  date: string,
+  includeSkipped: boolean
+): Session | undefined {
+  const day = occurrenceDay(date);
+  return sessions.find((o) => {
+    if (o.meetingId !== meetingId || occurrenceDay(o.date) !== day) return false;
+    if (!includeSkipped && o.kind === "skipped") return false;
+    return true;
+  });
+}
+
 /** A real meeting on that day — not a skipped week. */
 export function liveOnDate(
   sessions: Session[],
   meetingId: string,
   date: string
 ): Session | undefined {
-  const day = occurrenceDay(date);
-  return sessions.find(
-    (o) => o.meetingId === meetingId && occurrenceDay(o.date) === day && o.kind !== "skipped"
-  );
+  return sessionOnDate(sessions, meetingId, date, false);
 }
 
-function isBookableDate(
+function weekdaySpan(intended: string, anchor: number): { before: string; after: string } {
+  const wd = weekdayUTC(intended);
+  const fwd = (anchor - wd + 7) % 7;
+  const back = (wd - anchor + 7) % 7;
+  return {
+    after: addDays(intended, fwd),
+    before: addDays(intended, back === 0 ? 0 : -back),
+  };
+}
+
+/**
+ * The rhythm date on or before `intended`, and the next one on or after it.
+ * Equal when `intended` itself is on the rhythm.
+ */
+function enclosingRhythm(
   meeting: OccurrenceMeeting,
   sessions: Session[],
-  topics: Topic[],
-  date: string,
+  intended: string
+): { before: string; after: string } | null {
+  const m = meeting as TrackedMeeting;
+  if (m.rhythm === "as_needed") return { before: intended, after: intended };
+
+  const last = lastRhythmDate(sessionsFor(m.id, sessions), intended);
+  const anchor = m.anchorWeekday;
+
+  // Weekly-with-a-day: every that weekday is on the rhythm, history or not.
+  if (m.rhythm === "weekly" && anchor !== undefined) {
+    return weekdaySpan(intended, anchor);
+  }
+
+  if (last) {
+    if (last === intended) return { before: intended, after: intended };
+    return { before: last, after: projectFromLast(m, last) };
+  }
+
+  if (anchor !== undefined) return weekdaySpan(intended, anchor);
+  return null;
+}
+
+function nearestRhythmDate(
+  meeting: OccurrenceMeeting,
+  sessions: Session[],
+  intended: string,
   today: string
-): boolean {
-  const day = occurrenceDay(date);
-  if (meeting.rhythm === "as_needed") return day >= today;
-  return plannedSlots(meeting as TrackedMeeting, sessions, topics, today, 26).some(
-    (s) => s.date === day
-  );
+): string {
+  const span = enclosingRhythm(meeting, sessions, intended);
+  if (!span) return intended;
+  if (span.before === intended || span.after === intended) return intended;
+
+  const back = daysBetween(span.before, intended);
+  const fwd = daysBetween(intended, span.after);
+  let pick = fwd <= back ? span.after : span.before;
+  // A missed week stays in the past. Never pull it forward onto next week's
+  // upcoming occurrence just because plannedSlots starts at today.
+  if (intended < today && pick > today) {
+    if (span.before <= today) pick = span.before;
+    else return intended;
+  }
+  return pick;
+}
+
+/** Next series date at or after `from` that isn't a skipped/moved-away week. */
+function nextOpenFrom(
+  meeting: OccurrenceMeeting,
+  sessions: Session[],
+  from: string,
+  today: string,
+  intended: string
+): string | null {
+  const taken = takenSeriesDates(sessionsFor(meeting.id, sessions));
+  let d = from;
+  for (let i = 0; i < 60; i++) {
+    if (!taken.has(d)) {
+      if (intended < today && d > today) return null;
+      return d;
+    }
+    d = projectFromLast(meeting as TrackedMeeting, d);
+  }
+  return null;
 }
 
 /**
  * Where a new occurrence should land.
  *
- * - extras: same-date fold always; any other day is allowed (the intentional
- *   one-off path).
- * - flag off, regular: always create on the requested day — historical
- *   `addSession` behaviour, including duplicates.
- * - flag on, regular: fold same-date; keep on-rhythm / as-needed days;
- *   otherwise snap to the next rhythm date (and fold if that day is already
- *   booked).
+ * `reuseSameDate` is the call site's master rule (defaults from `guard`):
+ * - `none` — always insert (`addSession` with the flag off)
+ * - `any`  — reuse any row on that date, including skipped (placement / capture)
+ * - `live` — reuse a non-skipped row (flag-on books, extras with the flag on)
  */
 export function resolveOccurrence(args: {
   meeting: OccurrenceMeeting;
@@ -87,31 +184,42 @@ export function resolveOccurrence(args: {
   today: string;
   extra?: boolean;
   guard: boolean;
+  reuseSameDate?: SameDateReuse;
   topics?: Topic[];
 }): OccurrencePlan {
   const date = occurrenceDay(args.date);
-  const live = liveOnDate(args.sessions, args.meeting.id, date);
+  const reuse = args.reuseSameDate ?? sameDateReuseFor(args.extra ? "extra" : "addSession", args.guard);
 
-  if (args.extra) {
-    return live ? { reuseId: live.id, date } : { date };
+  if (args.extra && !args.guard) return { date };
+
+  if (reuse !== "none") {
+    const hit = sessionOnDate(args.sessions, args.meeting.id, date, reuse === "any");
+    if (hit) return { reuseId: hit.id, date };
   }
+
+  if (args.extra) return { date };
   if (!args.guard) return { date };
-  if (live) return { reuseId: live.id, date };
 
-  const topics = args.topics ?? [];
-  if (isBookableDate(args.meeting, args.sessions, topics, date, args.today)) {
-    return { date };
+  let snapped = nearestRhythmDate(args.meeting, args.sessions, date, args.today);
+  if (!liveOnDate(args.sessions, args.meeting.id, snapped)) {
+    const open = nextOpenFrom(args.meeting, args.sessions, snapped, args.today, date);
+    if (open) snapped = open;
   }
-
-  const next = nextOpenRhythmDate(
-    args.meeting as TrackedMeeting,
-    sessionsFor(args.meeting.id, args.sessions),
-    args.today
-  );
-  if (!next || next === date) return { date };
-  const there = liveOnDate(args.sessions, args.meeting.id, next);
-  return there ? { reuseId: there.id, date: next } : { date: next };
+  if (snapped === date) {
+    // Still on the intended day: only fold a live row (skipped already missed above).
+    const live = liveOnDate(args.sessions, args.meeting.id, snapped);
+    return live ? { reuseId: live.id, date: snapped } : { date: snapped };
+  }
+  const there = liveOnDate(args.sessions, args.meeting.id, snapped);
+  return there ? { reuseId: there.id, date: snapped } : { date: snapped };
 }
+
+export type ApplyOccurrenceOpts = {
+  guard: boolean;
+  today: string;
+  topics?: Topic[];
+  reuseSameDate?: SameDateReuse;
+};
 
 /** Apply {@link resolveOccurrence} to a sessions array. */
 export function applyOccurrence(
@@ -119,13 +227,14 @@ export function applyOccurrence(
   meeting: OccurrenceMeeting | undefined,
   spec: Omit<Session, "id">,
   uid: () => string,
-  opts: { guard: boolean; today: string; topics?: Topic[] }
+  opts: ApplyOccurrenceOpts
 ): { sessions: Session[]; sessionId: string } {
   const extra = spec.kind === "extra";
+  const reuse = opts.reuseSameDate ?? sameDateReuseFor(extra ? "extra" : "addSession", opts.guard);
   if (!meeting) {
-    if (opts.guard) {
-      const live = liveOnDate(sessions, spec.meetingId, spec.date);
-      if (live) return { sessions, sessionId: live.id };
+    if (reuse !== "none") {
+      const hit = sessionOnDate(sessions, spec.meetingId, spec.date, reuse === "any");
+      if (hit) return { sessions, sessionId: hit.id };
     }
     const id = uid();
     return { sessions: [...sessions, { ...spec, id }], sessionId: id };
@@ -137,6 +246,7 @@ export function applyOccurrence(
     today: opts.today,
     extra,
     guard: opts.guard,
+    reuseSameDate: reuse,
     topics: opts.topics,
   });
   if (plan.reuseId) return { sessions, sessionId: plan.reuseId };

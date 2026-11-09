@@ -85,6 +85,20 @@ await sql.unsafe(`DELETE FROM one_on_ones WHERE user_id = $1 AND meeting_id = $2
   const a = applyOccurrence([], weekly, spec, uid, { guard: true, today: "2026-10-23" });
   const b = applyOccurrence(a.sessions, weekly, spec, uid, { guard: true, today: "2026-10-23" });
   ok(b.sessions.length === 1 && b.sessionId === a.sessionId, "flag on: the second Oct 23 book is folded");
+
+  const last = [{ id: "oct22", meetingId: weekly.id, date: "2026-10-22" }];
+  const missed = applyOccurrence(
+    last,
+    weekly,
+    { meetingId: weekly.id, date: "2026-10-29" },
+    uid,
+    { guard: true, today: "2026-11-09" },
+  );
+  ok(
+    missed.sessions.some((o) => o.date === "2026-10-29") &&
+      !missed.sessions.some((o) => o.date > "2026-11-09"),
+    "flag on: logging past Thursday Oct 29 stays Oct 29 (does not snap after today)",
+  );
 }
 
 // ── consecutive-day: guest booking Wednesday after a Tuesday session ─────
