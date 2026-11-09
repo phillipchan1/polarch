@@ -37,6 +37,12 @@ export interface Env {
   OPENAI_TRANSCRIBE_MODEL?: string;
   /** Comma-separated allowlist. Empty = no new users. Set to Phil's email. */
   ALLOWED_EMAILS?: string;
+  /**
+   * Optional. `"1"` / `"true"` / `"on"` enables the same-date / off-rhythm
+   * occurrence guard. Unset (the default in every environment) leaves
+   * historical `addSession` behaviour in place.
+   */
+  SINGLE_OCCURRENCE_GUARD?: string;
 }
 
 const PLACEHOLDER_HYPERDRIVE = "00000000000000000000000000000000";

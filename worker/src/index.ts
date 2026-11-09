@@ -15,6 +15,7 @@ import {
   transcribeConfigured,
 } from "./transcribe.ts";
 import type { Env } from "./env.ts";
+import { flagFromEnv, flagOn } from "../../src/lib/flags.ts";
 import { authOf, finishRequest, sqlOf, type WorkerContext, type WorkerVars } from "./request.ts";
 import { mcpApp } from "./mcp/routes.ts";
 import { clearJournal } from "./mcp/workspace.ts";
@@ -401,7 +402,11 @@ app.post("/api/with/:token/topics", (c) =>
   withMember(c, async (m) => {
     const body = await readBody(c);
     if (!body) return json({ error: "invalid json" }, 400);
-    return json(await guestAddTopic(sqlOf(c), m, body));
+    return json(
+      await guestAddTopic(sqlOf(c), m, body, undefined, {
+        guard: flagOn("singleOccurrenceGuard") || flagFromEnv(c.env.SINGLE_OCCURRENCE_GUARD),
+      }),
+    );
   }),
 );
 
