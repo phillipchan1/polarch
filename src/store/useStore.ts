@@ -77,6 +77,15 @@ import {
   nextSlotAfter,
   plannedSlots,
 } from "../lib/topics";
+import { flagFromEnv, flagOn } from "../lib/flags";
+import { applyOccurrence } from "../lib/occurrenceGuard";
+
+function occurrenceGuardOn(): boolean {
+  return (
+    flagOn("singleOccurrenceGuard") ||
+    flagFromEnv(import.meta.env.VITE_SINGLE_OCCURRENCE_GUARD)
+  );
+}
 import {
   applyQuickClose,
   type TopicDisposition,
@@ -793,14 +802,17 @@ function placement(
   } else if (target.kind === "projected") {
     // Dropping on a projected week books it on the way in — the plan is the
     // commitment, so it shouldn't need a separate "schedule this" step.
-    const existing = sessions.find(
-      (o) => o.meetingId === meetingId && o.date === target.date
-    );
-    if (existing) {
-      sessionId = existing.id;
-    } else if (meetingId) {
-      sessionId = uid();
-      sessions = [...sessions, { id: sessionId, meetingId, date: target.date }];
+    if (meetingId) {
+      const meeting = s.meetings.find((m) => m.id === meetingId);
+      const booked = applyOccurrence(
+        sessions,
+        meeting,
+        { meetingId, date: target.date },
+        uid,
+        { guard: occurrenceGuardOn(), today: todayISO(), topics: s.topics }
+      );
+      sessions = booked.sessions;
+      sessionId = booked.sessionId;
     }
   } else {
     lane = target.lane;
@@ -2308,18 +2320,16 @@ export const useStore = create<Store>((set, get) => ({
       if (target?.kind === "session") {
         targetSession = target.sessionId;
       } else if (target?.kind === "projected" && target.meetingId) {
-        const existing = sessions.find(
-          (o) => o.meetingId === target.meetingId && o.date === target.date
+        const meeting = s.meetings.find((m) => m.id === target.meetingId);
+        const booked = applyOccurrence(
+          sessions,
+          meeting,
+          { meetingId: target.meetingId, date: target.date },
+          uid,
+          { guard: occurrenceGuardOn(), today: todayISO(), topics: s.topics }
         );
-        if (existing) {
-          targetSession = existing.id;
-        } else {
-          targetSession = uid();
-          sessions = [
-            ...sessions,
-            { id: targetSession, meetingId: target.meetingId, date: target.date },
-          ];
-        }
+        sessions = booked.sessions;
+        targetSession = booked.sessionId;
       }
       const sessionMeeting = targetSession
         ? sessions.find((o) => o.id === targetSession)?.meetingId
@@ -3134,6 +3144,12 @@ export const useStore = create<Store>((set, get) => ({
       if (existing) return existing;
       const made = created.find((o) => o.date === date);
       if (made) return made.id;
+      if (occurrenceGuardOn()) {
+        const held = s.sessions.find(
+          (o) => o.meetingId === meetingId && o.date === date && o.kind !== "skipped"
+        );
+        if (held) return held.id;
+      }
       const o: Session = { id: uid(), meetingId, date };
       created.push(o);
       return o.id;
@@ -3336,9 +3352,19 @@ export const useStore = create<Store>((set, get) => ({
     }),
 
   addSession: (o) => {
-    const id = uid();
-    set((s) => ({ sessions: [...s.sessions, { ...o, id }] }));
-    return id;
+    let sessionId = "";
+    set((s) => {
+      const meeting = s.meetings.find((m) => m.id === o.meetingId);
+      const booked = applyOccurrence(s.sessions, meeting, o, uid, {
+        guard: occurrenceGuardOn(),
+        today: todayISO(),
+        topics: s.topics,
+      });
+      sessionId = booked.sessionId;
+      if (booked.sessions === s.sessions) return {};
+      return { sessions: booked.sessions };
+    });
+    return sessionId;
   },
   updateSession: (id, patch) =>
     set((s) => ({

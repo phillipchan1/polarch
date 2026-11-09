@@ -7,6 +7,7 @@
  * printed as null.
  */
 import { OpError, type OpEnv } from "../../../../src/lib/agendaOps.ts";
+import { flagFromEnv, flagOn } from "../../../../src/lib/flags.ts";
 import { arcPlan, currentStep, progressOf, type PlannedStep } from "../../../../src/lib/arcs.ts";
 import { coverageStats } from "../../../../src/lib/ideas.ts";
 import { STATE_LABEL, meetingSubjectName, meetingTitle, readinessOf } from "../../../../src/lib/readiness.ts";
@@ -34,8 +35,12 @@ export function weekdayName(iso: string): string {
   return WEEKDAYS[new Date(`${iso}T00:00:00Z`).getUTCDay()];
 }
 
-export function opEnv(today?: string): OpEnv {
-  return { uid: newId, today: today ?? utcToday() };
+export function opEnv(today?: string, env?: { SINGLE_OCCURRENCE_GUARD?: string }): OpEnv {
+  return {
+    uid: newId,
+    today: today ?? utcToday(),
+    singleOccurrenceGuard: flagOn("singleOccurrenceGuard") || flagFromEnv(env?.SINGLE_OCCURRENCE_GUARD),
+  };
 }
 
 /** Ops and the data layer fail in their own vocabulary; the model hears one. */
@@ -53,7 +58,7 @@ export type Loaded = { ws: Workspace; env: OpEnv };
 
 /** Load the user's workspace for a read. */
 export async function readWorkspace(ctx: ToolContext, today?: string): Promise<Loaded> {
-  return { ws: await loadWorkspace(ctx.sql, ctx.principal.userId), env: opEnv(today) };
+  return { ws: await loadWorkspace(ctx.sql, ctx.principal.userId), env: opEnv(today, ctx.env) };
 }
 
 export type Mutation<T> = { edit: Edit; value: T; summary: string };
@@ -70,7 +75,7 @@ export async function mutate<T>(
 ): Promise<{ value: T; saved: SaveResult; env: OpEnv; ws: Workspace; summary: string }> {
   return guarded(async () => {
     const ws = await loadWorkspace(ctx.sql, ctx.principal.userId);
-    const env = opEnv(today);
+    const env = opEnv(today, ctx.env);
     const out = fn(ws, env);
     const saved = await saveWorkspace(ctx.sql, ctx.principal.userId, ws, out.edit, {
       tool,

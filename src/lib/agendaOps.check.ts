@@ -323,6 +323,17 @@ const dates = (s: AgendaState) =>
   ok(updateOccurrence(r2.state, env(), "m1", "2026-11-05", { point: null }).value.point === undefined, "a null point clears it");
   throwsOp(() => updateOccurrence(s0, env(), "m1", "2026-11-05", { appendNotes: "  " }), "invalid", "blank notes");
   ok(ensureOccurrence(r.state, env(), "m1", "2026-11-05").booked === false, "ensureOccurrence reuses a booked week");
+  const guarded = { ...env(), singleOccurrenceGuard: true };
+  ok(
+    ensureOccurrence(r.state, guarded, "m1", "2026-11-05").sessionId === r.value.id,
+    "flag on: ensureOccurrence still folds the same date (MCP path)"
+  );
+  throwsOp(
+    () => ensureOccurrence(r.state, guarded, "m1", "2026-11-06"),
+    "invalid",
+    "flag on: MCP still refuses an off-rhythm day (use add_extra_occurrence)",
+    /isn't an occurrence/
+  );
 }
 
 // ── meetings, sections, tags ─────────────────────────────────────────────

@@ -27,6 +27,8 @@ import type {
 } from "../types";
 import { reorderInto, reorderManyInto } from "./ideas.ts";
 import { addDays, weekdayUTC } from "./readiness.ts";
+import { flagOn } from "./flags.ts";
+import { liveOnDate } from "./occurrenceGuard.ts";
 import { effectiveSlotId, nextSlotAfter, plannedSlots, type Slot } from "./topics.ts";
 
 export type AgendaState = {
@@ -42,6 +44,12 @@ export type OpEnv = {
   uid: () => string;
   /** The caller's "today", YYYY-MM-DD. */
   today: string;
+  /**
+   * When true, same-meeting same-date sessions fold together. Off-rhythm
+   * dates still throw here (MCP should use `addExtraOccurrence`); the store's
+   * `addSession` snaps those onto the next rhythm date instead.
+   */
+  singleOccurrenceGuard?: boolean;
 };
 
 export type OpResult<T> = { state: AgendaState; value: T };
@@ -155,7 +163,8 @@ export function ensureOccurrence(
 ): { sessions: Session[]; sessionId: string; booked: boolean } {
   const meeting = meetingOf(state, meetingId);
   if (!isISODate(date)) throw invalid(`"${date}" isn't a date (use YYYY-MM-DD).`);
-  const live = liveOn(state, meetingId, date);
+  const guard = env.singleOccurrenceGuard ?? flagOn("singleOccurrenceGuard");
+  const live = liveOn(state, meetingId, date) ?? (guard ? liveOnDate(state.sessions, meetingId, date) : undefined);
   if (live) return { sessions: state.sessions, sessionId: live.id, booked: false };
   if (skippedOn(state, meetingId, date)) {
     throw new OpError(

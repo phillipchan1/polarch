@@ -1,3 +1,5 @@
+import type { Session, TrackedMeeting } from "../../src/types.ts";
+import { resolveOccurrence } from "../../src/lib/occurrenceGuard.ts";
 import type { Sql } from "./db.ts";
 
 /**
@@ -460,6 +462,7 @@ export async function guestAddTopic(
   m: Member,
   input: { text?: unknown; date?: unknown; slotId?: unknown },
   now = new Date(),
+  opts?: { guard?: boolean },
 ): Promise<{ id: string; sessionId: string | null }> {
   const text = typeof input.text === "string" ? input.text.trim() : "";
   const date = typeof input.date === "string" ? input.date : "";
@@ -486,7 +489,7 @@ export async function guestAddTopic(
     throw new ShareError(429, "that's a lot for one day — try again tomorrow");
   }
 
-  const sessionId = later ? null : await bookedOn(sql, m, meeting, date);
+  const sessionId = later ? null : await bookedOn(sql, m, meeting, date, today, opts?.guard === true);
 
   const order = (await sql.unsafe(
     `SELECT COALESCE(max(sort_order), -1)::int + 1 AS n FROM topics WHERE user_id = $1 AND meeting_id = $2`,
@@ -514,7 +517,14 @@ export async function guestAddTopic(
 }
 
 /** The occurrence on that date, booking it if it was only projected. */
-async function bookedOn(sql: Sql, m: Member, meeting: Row, date: string): Promise<string> {
+async function bookedOn(
+  sql: Sql,
+  m: Member,
+  meeting: Row,
+  date: string,
+  today: string,
+  guard: boolean,
+): Promise<string> {
   const onDay = (await sql.unsafe(
     `SELECT id, occurrence_kind FROM one_on_ones
       WHERE user_id = $1 AND meeting_id = $2 AND (date = $3 OR series_date = $3::date)`,
@@ -524,6 +534,50 @@ async function bookedOn(sql: Sql, m: Member, meeting: Row, date: string): Promis
   if (held) return held.id as string;
   if (onDay.some((r) => r.occurrence_kind === "skipped")) {
     throw new ShareError(409, "that week is skipped");
+  }
+  if (guard) {
+    const rows = (await sql.unsafe(
+      `SELECT id, date, series_date, occurrence_kind FROM one_on_ones
+        WHERE user_id = $1 AND meeting_id = $2`,
+      [m.ownerId, m.meetingId],
+    )) as unknown as Row[];
+    const dayOf = (v: unknown): string =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10);
+    const sessions: Session[] = rows.map((r) => ({
+      id: r.id as string,
+      meetingId: m.meetingId,
+      date: dayOf(r.date),
+      seriesDate: r.series_date ? dayOf(r.series_date) : undefined,
+      kind: (r.occurrence_kind as Session["kind"] | null) ?? undefined,
+    }));
+    const tracked: TrackedMeeting = {
+      id: m.meetingId,
+      subjectKind: (meeting.subject_kind as TrackedMeeting["subjectKind"]) ?? "person",
+      subjectId: (meeting.subject_id as string) ?? "",
+      rhythm: (meeting.rhythm as TrackedMeeting["rhythm"]) ?? "weekly",
+      floorDays: (meeting.floor_days as number | null) ?? undefined,
+      nextDate: meeting.next_date ? String(meeting.next_date).slice(0, 10) : undefined,
+      anchorWeekday: (meeting.anchor_weekday as number | null) ?? undefined,
+    };
+    const plan = resolveOccurrence({
+      meeting: tracked,
+      sessions,
+      date,
+      today,
+      guard: true,
+    });
+    if (plan.reuseId) return plan.reuseId;
+    date = plan.date;
+    const snapped = (await sql.unsafe(
+      `SELECT id, occurrence_kind FROM one_on_ones
+        WHERE user_id = $1 AND meeting_id = $2 AND (date = $3 OR series_date = $3::date)`,
+      [m.ownerId, m.meetingId, date],
+    )) as unknown as Row[];
+    const live = snapped.find((r) => r.occurrence_kind !== "skipped");
+    if (live) return live.id as string;
+    if (snapped.some((r) => r.occurrence_kind === "skipped")) {
+      throw new ShareError(409, "that week is skipped");
+    }
   }
   const sessionId = crypto.randomUUID();
   await sql.unsafe(
