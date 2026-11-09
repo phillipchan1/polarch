@@ -32,6 +32,8 @@ import { todayISO } from "../lib/readiness";
 import { ensureSessionId, plannedSlots } from "../lib/topics";
 import { startMeeting, useLive } from "../lib/liveMeeting";
 import { useMeetingsByNext } from "@/hooks/use-meetings-by-next";
+import { flagOn } from "@/lib/flags";
+import { quickCloseCommands } from "@/lib/quickClose";
 import { Avatar } from "./Avatar";
 import { cx } from "@/utils/cx";
 import { SearchLg } from "@untitledui/icons";
@@ -371,8 +373,23 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         });
       });
 
+    quickCloseCommands(
+      flagOn("quickClose"),
+      byNext.map((r) => ({ meetingId: r.meeting.id, title: r.title, readiness: r.readiness })),
+    ).forEach((cmd, i) => {
+      const id = `meet:quick-close:${cmd.sessionId}`;
+      rows.push({
+        id,
+        label: `Quick close — ${cmd.title}`,
+        hint: "No recording",
+        group: "Meetings",
+        resting: i < 2,
+        run: go(id, () => openModal({ kind: "quickClose", sessionId: cmd.sessionId })),
+      });
+    });
+
     return rows;
-  }, [byNext, sessions, topics, liveSessionId, runRow, openSession, addSession]);
+  }, [byNext, sessions, topics, liveSessionId, runRow, openSession, addSession, openModal]);
 
   // The list lags the field by at most a frame under load, so typing is never
   // gated on scoring a workspace's worth of prose.

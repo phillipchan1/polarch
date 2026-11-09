@@ -7,6 +7,7 @@ import {
 } from "./forms";
 import { TriageModal } from "./TriageModal";
 import { CaptureDialog } from "./shell/CaptureDialog";
+import { QuickCloseSheet } from "./QuickCloseSheet";
 
 /**
  * Renders whatever `modal` state names, from anywhere in the app.
@@ -52,5 +53,7 @@ export function ModalHost() {
       return <TriageModal onClose={closeModal} />;
     case "capture":
       return <CaptureDialog draft={modal.draft} onClose={closeModal} />;
+    case "quickClose":
+      return <QuickCloseSheet sessionId={modal.sessionId} onClose={closeModal} />;
   }
 }
