@@ -12,8 +12,7 @@ import { startMeeting } from "../lib/liveMeeting";
 import { cx } from "@/utils/cx";
 import { useStore } from "../store/useStore";
 import { parseColumnKey, plannedSlots } from "../lib/topics";
-import { flagOn } from "../lib/flags";
-import { happenedTodayAvailable } from "../lib/occurrenceGuard";
+import { happenedTodayAvailable, occurrenceGuardOn } from "../lib/occurrenceGuard";
 import { SessionAgenda } from "./SessionAgenda";
 import { SessionEditor } from "./SessionEditor";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
@@ -213,7 +212,7 @@ function OccurrenceWhen({
   const changeable = upcoming || !session?.notes?.trim();
   const offerHappenedToday = session
     ? happenedTodayAvailable(
-        flagOn("singleOccurrenceGuard"),
+        occurrenceGuardOn(),
         happenedTodaySessionId,
         session.id,
         session.date,

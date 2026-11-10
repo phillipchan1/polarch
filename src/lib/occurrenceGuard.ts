@@ -29,6 +29,7 @@
  * the day they were asked for.
  */
 import type { Session, Topic, TrackedMeeting } from "../types";
+import { flagFromEnv, flagOn } from "./flags.ts";
 import {
   addDays,
   lastRhythmDate,
@@ -71,6 +72,22 @@ export function occurrenceDay(value: string): string {
 export function sameDateReuseFor(site: OccurrenceSite, guard: boolean): SameDateReuse {
   if (site === "placement") return guard ? "live" : "any";
   return guard ? "live" : "none";
+}
+
+function viteOccurrenceGuardEnv(): string | undefined {
+  const env = (import.meta as { env?: { VITE_SINGLE_OCCURRENCE_GUARD?: string } }).env;
+  return env?.VITE_SINGLE_OCCURRENCE_GUARD;
+}
+
+/**
+ * Store and UI share this: compiled `singleOccurrenceGuard` OR the Vite env.
+ * Production turns the guard on with `VITE_SINGLE_OCCURRENCE_GUARD`; `?flag=`
+ * is dev-only. Pass `viteEnv` in tests.
+ */
+export function occurrenceGuardOn(
+  viteEnv: string | undefined = viteOccurrenceGuardEnv()
+): boolean {
+  return flagOn("singleOccurrenceGuard") || flagFromEnv(viteEnv);
 }
 
 function sessionOnDate(
