@@ -153,6 +153,7 @@ export function MeetingEditor({
   }, [session?.notes]);
 
   useEffect(() => {
+    if (!flagOn("singleOccurrenceGuard")) return;
     if (session?.date) setDate(session.date);
   }, [session?.date]);
   useEffect(() => {
