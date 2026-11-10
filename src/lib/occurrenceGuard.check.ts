@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import type { Session, TrackedMeeting } from "../types";
 import {
   applyHappenedToday,
   applyOccurrence,
   happenedTodayAvailable,
+  occurrenceGuardOn,
   resolveOccurrence,
   sameDateReuseFor,
 } from "./occurrenceGuard";
@@ -361,6 +363,51 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   ok(
     happenedTodayAvailable(false, "s1", "s1", "2026-11-19", "2026-11-13") === false,
     "flag off: It happened today is not offered"
+  );
+}
+
+// ── component gate: same helper as the store, including Vite-only on ─────
+{
+  setFlagForTests("singleOccurrenceGuard", undefined);
+  ok(
+    occurrenceGuardOn(undefined) === false,
+    "occurrenceGuardOn is off when neither flag nor VITE_SINGLE_OCCURRENCE_GUARD is set"
+  );
+  ok(
+    occurrenceGuardOn("1") === true,
+    "occurrenceGuardOn is on when only VITE_SINGLE_OCCURRENCE_GUARD=1 is set"
+  );
+  ok(
+    happenedTodayAvailable(occurrenceGuardOn("1"), "s1", "s1", "2026-11-19", "2026-11-13") === true,
+    "It happened today gate is on when only VITE_SINGLE_OCCURRENCE_GUARD=1 is set"
+  );
+  ok(
+    happenedTodayAvailable(occurrenceGuardOn(undefined), "s1", "s1", "2026-11-19", "2026-11-13") === false,
+    "It happened today gate is off when neither flag nor VITE env is set"
+  );
+
+  const editor = readFileSync("src/components/MeetingEditor.tsx", "utf8");
+  const panel = readFileSync("src/components/OccurrenceNotesPanel.tsx", "utf8");
+  const store = readFileSync("src/store/useStore.ts", "utf8");
+  ok(
+    editor.includes("occurrenceGuardOn()") && editor.includes("happenedTodayAvailable, occurrenceGuardOn"),
+    "MeetingEditor imports and calls occurrenceGuardOn"
+  );
+  ok(
+    !editor.includes('flagOn("singleOccurrenceGuard")'),
+    "MeetingEditor no longer gates on flagOn(singleOccurrenceGuard) alone"
+  );
+  ok(
+    panel.includes("occurrenceGuardOn()") && panel.includes("happenedTodayAvailable, occurrenceGuardOn"),
+    "OccurrenceNotesPanel imports and calls occurrenceGuardOn"
+  );
+  ok(
+    !panel.includes('flagOn("singleOccurrenceGuard")'),
+    "OccurrenceNotesPanel no longer gates on flagOn(singleOccurrenceGuard) alone"
+  );
+  ok(
+    store.includes("occurrenceGuardOn") && !store.includes("function occurrenceGuardOn"),
+    "the store reuses the shared occurrenceGuardOn helper"
   );
 }
 

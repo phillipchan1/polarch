@@ -21,8 +21,7 @@ import { WrapUpSheet } from "./WrapUpSheet";
 import { markWrapped, wasWrapped } from "../lib/wrapUp";
 import { addDays, meetingSubjectName, meetingTitle, todayISO } from "../lib/readiness";
 import { DEMO } from "../lib/demo";
-import { flagOn } from "../lib/flags";
-import { happenedTodayAvailable } from "../lib/occurrenceGuard";
+import { happenedTodayAvailable, occurrenceGuardOn } from "../lib/occurrenceGuard";
 
 import { Input } from "@/components/base/input/input";
 import { confirmAction } from "./ConfirmDialog";
@@ -153,7 +152,7 @@ export function MeetingEditor({
   }, [session?.notes]);
 
   useEffect(() => {
-    if (!flagOn("singleOccurrenceGuard")) return;
+    if (!occurrenceGuardOn()) return;
     if (session?.date) setDate(session.date);
   }, [session?.date]);
   useEffect(() => {
@@ -272,7 +271,7 @@ export function MeetingEditor({
         .toUpperCase()
     : "";
   const offerHappenedToday = happenedTodayAvailable(
-    flagOn("singleOccurrenceGuard"),
+    occurrenceGuardOn(),
     happenedTodaySessionId,
     session.id,
     session.date,

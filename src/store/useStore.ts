@@ -77,8 +77,7 @@ import {
   nextSlotAfter,
   plannedSlots,
 } from "../lib/topics";
-import { flagFromEnv, flagOn } from "../lib/flags";
-import { applyHappenedToday, applyOccurrence, sameDateReuseFor } from "../lib/occurrenceGuard";
+import { applyHappenedToday, applyOccurrence, occurrenceGuardOn, sameDateReuseFor } from "../lib/occurrenceGuard";
 import {
   applyQuickClose,
   type TopicDisposition,
@@ -744,13 +743,6 @@ type Store = PersistedData &
 
 const DATA_KEY = "data";
 const uid = () => Math.random().toString(36).slice(2, 10);
-
-function occurrenceGuardOn(): boolean {
-  return (
-    flagOn("singleOccurrenceGuard") ||
-    flagFromEnv(import.meta.env.VITE_SINGLE_OCCURRENCE_GUARD)
-  );
-}
 
 function bookOccurrence(
   sessions: Session[],
