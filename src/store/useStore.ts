@@ -78,7 +78,7 @@ import {
   plannedSlots,
 } from "../lib/topics";
 import { flagFromEnv, flagOn } from "../lib/flags";
-import { applyOccurrence, sameDateReuseFor } from "../lib/occurrenceGuard";
+import { applyHappenedToday, applyOccurrence, sameDateReuseFor } from "../lib/occurrenceGuard";
 import {
   applyQuickClose,
   type TopicDisposition,
@@ -224,6 +224,11 @@ type UIState = {
   section: string | null;
   /** Full-screen session editor — when set, SessionEditorView takes over. */
   sessionId: string | null;
+  /**
+   * Flag-on Book created a later rhythm date: the open session may offer
+   * "It happened today". Null when the flag is off.
+   */
+  happenedTodaySessionId: string | null;
   collapsedTeams: string[];
   dark: boolean;
   /** Entity panel width beside the canvas, as a percentage of the split. */
@@ -687,6 +692,11 @@ type Store = PersistedData &
       value: boolean
     ) => void;
     addSession: (o: Omit<Session, "id">) => string;
+    /**
+     * Flag-on Book landed on a later rhythm date: log that session on today
+     * instead. No-op when the flag is off or the session isn't the offer.
+     */
+    logHappenedToday: (sessionId: string) => void;
     updateSession: (id: string, patch: Partial<Omit<Session, "id">>) => void;
     deleteSession: (id: string) => void;
     addGoal: (g: Omit<Goal, "id">) => void;
@@ -1562,6 +1572,7 @@ export const useStore = create<Store>((set, get) => ({
   focused: false,
   section: null,
   sessionId: null,
+  happenedTodaySessionId: null,
   collapsedTeams: [],
   dark: initialDark(),
   panelPct: initialPanelPct(),
@@ -3373,10 +3384,26 @@ export const useStore = create<Store>((set, get) => ({
       const meeting = s.meetings.find((m) => m.id === o.meetingId);
       const booked = bookOccurrence(s.sessions, meeting, o, s.topics, "addSession");
       sessionId = booked.sessionId;
-      if (booked.sessions === s.sessions) return {};
-      return { sessions: booked.sessions };
+      const offer = booked.happenedTodayOffer ? sessionId : null;
+      if (booked.sessions === s.sessions) {
+        return offer ? { happenedTodaySessionId: offer } : {};
+      }
+      return { sessions: booked.sessions, happenedTodaySessionId: offer };
     });
     return sessionId;
+  },
+  logHappenedToday: (sessionId) => {
+    if (!occurrenceGuardOn()) return;
+    set((s) => {
+      if (s.happenedTodaySessionId !== sessionId) return {};
+      const moved = applyHappenedToday(s.sessions, s.topics, sessionId, todayISO());
+      return {
+        sessions: moved.sessions,
+        topics: moved.topics,
+        happenedTodaySessionId: null,
+        sessionId: s.sessionId === sessionId ? moved.sessionId : s.sessionId,
+      };
+    });
   },
   updateSession: (id, patch) =>
     set((s) => ({

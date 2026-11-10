@@ -1,6 +1,7 @@
 import "../lib/nodeDomShim.ts";
 import type { Session, Topic, TrackedMeeting } from "../types";
 import { setFlagForTests } from "../lib/flags";
+import { todayISO } from "../lib/health";
 import { useStore } from "./useStore";
 
 /**
@@ -116,12 +117,95 @@ setFlagForTests("singleOccurrenceGuard", true);
     const landed = useStore.getState().sessions.map((o) => o.date).sort();
     ok(
       landed.join() === "2026-11-05,2026-11-19",
-      `flag on: addSession(${day}) snaps forward to Nov 19, not back to Nov 12`
+      `flag on: addSession(${day}) with no Thursday this week creates next Thursday Nov 19`
     );
   }
 }
 
+{
+  const thisWeek: Session[] = [
+    { id: "nov5", meetingId: meeting.id, date: "2026-11-05" },
+    { id: "nov12", meetingId: meeting.id, date: "2026-11-12" },
+  ];
+  for (const day of ["2026-11-13", "2026-11-14", "2026-11-15"] as const) {
+    reset(thisWeek, []);
+    const id = useStore.getState().addSession({ meetingId: meeting.id, date: day });
+    const st = useStore.getState();
+    ok(
+      id === "nov12" && st.sessions.length === 2 && st.happenedTodaySessionId === null,
+      `flag on: addSession(${day}) opens this week's existing Thursday instead of creating next week`
+    );
+  }
+}
+
+{
+  reset(
+    [
+      { id: "nov5", meetingId: meeting.id, date: "2026-11-05" },
+      { id: "nov19", meetingId: meeting.id, date: "2026-11-19" },
+    ],
+    []
+  );
+  useStore.setState({ happenedTodaySessionId: "nov19" });
+  useStore.getState().logHappenedToday("nov19");
+  const after = useStore.getState();
+  const today = todayISO();
+  ok(
+    after.sessions.some((o) => o.id === "nov19" && o.date === today) &&
+      !after.sessions.some((o) => o.date === "2026-11-19") &&
+      after.happenedTodaySessionId === null,
+    "flag on: logHappenedToday moves the created next-Thursday book onto today"
+  );
+}
+
+{
+  reset([{ id: "oct22", meetingId: meeting.id, date: "2026-10-22" }], []);
+  useStore.getState().addSession({ meetingId: meeting.id, date: "2026-10-27" });
+  ok(
+    useStore.getState().sessions.map((o) => o.date).sort().join() === "2026-10-22,2026-10-27",
+    "flag on: addSession of past off-rhythm Tue Oct 27 lands on Oct 27"
+  );
+}
+
+{
+  reset([{ id: "oct22", meetingId: meeting.id, date: "2026-10-22" }], []);
+  useStore.getState().addSession({ meetingId: meeting.id, date: "2026-10-29" });
+  ok(
+    useStore.getState().sessions.map((o) => o.date).sort().join() === "2026-10-22,2026-10-29",
+    "flag on: addSession of past on-rhythm Thu Oct 29 stays Oct 29"
+  );
+}
+
 setFlagForTests("singleOccurrenceGuard", undefined);
+
+{
+  reset([{ id: "nov12", meetingId: meeting.id, date: PROJECTED }], []);
+  const id = useStore.getState().addSession({ meetingId: meeting.id, date: "2026-11-13" });
+  const st = useStore.getState();
+  ok(
+    st.sessions.length === 2 &&
+      id !== "nov12" &&
+      st.sessions.some((o) => o.date === "2026-11-13") &&
+      st.happenedTodaySessionId === null,
+    "flag off: addSession on Friday with Thursday existing inserts Friday (master)"
+  );
+}
+
+{
+  reset(
+    [
+      { id: "nov5", meetingId: meeting.id, date: "2026-11-05" },
+      { id: "nov19", meetingId: meeting.id, date: "2026-11-19" },
+    ],
+    []
+  );
+  useStore.setState({ happenedTodaySessionId: "nov19" });
+  useStore.getState().logHappenedToday("nov19");
+  ok(
+    useStore.getState().sessions.some((o) => o.id === "nov19" && o.date === "2026-11-19"),
+    "flag off: logHappenedToday is a no-op"
+  );
+}
 
 if (fails.length) {
   console.error(`occurrenceGuard.store.check: ${fails.length}/${checks} failed`);

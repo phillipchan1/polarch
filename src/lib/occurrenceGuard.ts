@@ -20,11 +20,13 @@
  * - extras: never reuse through this helper; `addExtraOccurrence` has its
  *   own live-same-date fold on the store path.
  *
- * Behind `singleOccurrenceGuard`: fold a live same-calendar-day session, keep
- * on-rhythm dates (including a missed past week), and snap only off-rhythm
- * dates forward onto the next rhythm day on or after both the requested day
- * and today — a booking never lands in the past. One-offs still land on the
- * day they were asked for.
+ * Behind `singleOccurrenceGuard`: fold a live same-calendar-day session.
+ * A past date is a log: it lands on exactly the day asked, on-rhythm or not,
+ * and never snaps forward. Snapping applies only to today or a future date
+ * (Book / Readiness). Book on an off-rhythm today opens this ISO week's
+ * rhythm meeting when that meeting already exists; otherwise it creates the
+ * next rhythm date and offers "It happened today". One-offs still land on
+ * the day they were asked for.
  */
 import type { Session, Topic, TrackedMeeting } from "../types";
 import {
@@ -51,6 +53,11 @@ export type OccurrencePlan = {
   reuseId?: string;
   /** Date the new row should carry, when we are inserting. */
   date: string;
+  /**
+   * Flag-on Book asked for today and created a later rhythm date instead.
+   * The UI offers a one-tap to log it on today.
+   */
+  happenedTodayOffer?: boolean;
 };
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
@@ -169,22 +176,45 @@ function nextRhythmOnOrAfter(
 
 /**
  * Next series date at or after `from` that isn't a skipped/moved-away week.
- * Dates before `today` are skipped unless they are the intended on-rhythm
- * stay-put (logging a missed week).
+ * Past dates never enter this helper — they log in place — so candidates
+ * before `today` are skipped.
  */
 function nextOpenFrom(
   meeting: OccurrenceMeeting,
   sessions: Session[],
   from: string,
-  today: string,
-  intended: string
+  today: string
 ): string | null {
   const taken = takenSeriesDates(sessionsFor(meeting.id, sessions));
   let d = from;
   for (let i = 0; i < 60; i++) {
-    if (!taken.has(d) && (d >= today || d === intended)) return d;
+    if (!taken.has(d) && d >= today) return d;
     d = projectFromLast(meeting as TrackedMeeting, d);
   }
+  return null;
+}
+
+/** Monday of the ISO week containing `date` (UTC). */
+function isoWeekStart(date: string): string {
+  const wd = weekdayUTC(date);
+  return addDays(date, wd === 0 ? -6 : 1 - wd);
+}
+
+/**
+ * The rhythm date that falls in today's ISO week (Mon–Sun), if there is one.
+ * Thursday's meeting is "this week's" on Fri–Sun; on Monday it is next Thursday.
+ */
+function thisIsoWeekRhythmDate(
+  meeting: OccurrenceMeeting,
+  sessions: Session[],
+  today: string
+): string | null {
+  const start = isoWeekStart(today);
+  const end = addDays(start, 6);
+  const span = enclosingRhythm(meeting, sessions, today);
+  if (!span) return null;
+  if (span.before >= start && span.before <= end) return span.before;
+  if (span.after >= start && span.after <= end) return span.after;
   return null;
 }
 
@@ -227,6 +257,25 @@ export function resolveOccurrence(args: {
   if (!args.guard) return { date: args.date };
 
   const date = occurrenceDay(args.date);
+
+  // (a) A past date is a log, not a booking. Never snap it forward.
+  if (date < args.today) {
+    const there = liveOnDate(args.sessions, args.meeting.id, date);
+    return there ? { reuseId: there.id, date } : { date };
+  }
+
+  // (b) Book never silently creates next week's meeting. An off-rhythm
+  // today-or-future date in this ISO week opens this week's rhythm meeting
+  // when it already exists (Thursday's, when Book is pressed Fri–Sun).
+  if (date >= args.today && !isOnRhythm(args.meeting, args.sessions, date)) {
+    const weekStart = isoWeekStart(args.today);
+    const weekRhythm = thisIsoWeekRhythmDate(args.meeting, args.sessions, args.today);
+    if (weekRhythm && date <= addDays(weekStart, 6)) {
+      const existing = liveOnDate(args.sessions, args.meeting.id, weekRhythm);
+      if (existing) return { reuseId: existing.id, date: weekRhythm };
+    }
+  }
+
   const snappedTo = isOnRhythm(args.meeting, args.sessions, date)
     ? date
     : nextRhythmOnOrAfter(
@@ -236,11 +285,15 @@ export function resolveOccurrence(args: {
       );
   let snapped = snappedTo;
   if (!liveOnDate(args.sessions, args.meeting.id, snapped)) {
-    const open = nextOpenFrom(args.meeting, args.sessions, snapped, args.today, date);
+    const open = nextOpenFrom(args.meeting, args.sessions, snapped, args.today);
     if (open) snapped = open;
   }
   const there = liveOnDate(args.sessions, args.meeting.id, snapped);
-  return there ? { reuseId: there.id, date: snapped } : { date: snapped };
+  if (there) return { reuseId: there.id, date: snapped };
+  return {
+    date: snapped,
+    happenedTodayOffer: date === args.today && snapped > args.today,
+  };
 }
 
 export type ApplyOccurrenceOpts = {
@@ -250,6 +303,12 @@ export type ApplyOccurrenceOpts = {
   reuseSameDate?: SameDateReuse;
 };
 
+export type AppliedOccurrence = {
+  sessions: Session[];
+  sessionId: string;
+  happenedTodayOffer?: boolean;
+};
+
 /** Apply {@link resolveOccurrence} to a sessions array. */
 export function applyOccurrence(
   sessions: Session[],
@@ -257,7 +316,7 @@ export function applyOccurrence(
   spec: Omit<Session, "id">,
   uid: () => string,
   opts: ApplyOccurrenceOpts
-): { sessions: Session[]; sessionId: string } {
+): AppliedOccurrence {
   const extra = spec.kind === "extra";
   const reuse = opts.reuseSameDate ?? sameDateReuseFor(extra ? "extra" : "addSession", opts.guard);
   if (!meeting) {
@@ -283,5 +342,50 @@ export function applyOccurrence(
   return {
     sessions: [...sessions, { ...spec, id, date: plan.date }],
     sessionId: id,
+    happenedTodayOffer: plan.happenedTodayOffer,
+  };
+}
+
+/** Whether the open session should show the flag-on "It happened today" tap. */
+export function happenedTodayAvailable(
+  guard: boolean,
+  offerSessionId: string | null | undefined,
+  sessionId: string,
+  sessionDate: string,
+  today: string
+): boolean {
+  return Boolean(
+    guard && offerSessionId === sessionId && occurrenceDay(sessionDate) > today
+  );
+}
+
+/**
+ * Relocate a Book that landed on a future rhythm date onto `today` instead.
+ * If today already has a live session, fold into it and drop the placeholder.
+ */
+export function applyHappenedToday(
+  sessions: Session[],
+  topics: Topic[],
+  sessionId: string,
+  today: string
+): { sessions: Session[]; topics: Topic[]; sessionId: string } {
+  const session = sessions.find((o) => o.id === sessionId);
+  if (!session || occurrenceDay(session.date) <= today) {
+    return { sessions, topics, sessionId };
+  }
+  const existing = liveOnDate(sessions, session.meetingId, today);
+  if (existing && existing.id !== sessionId) {
+    return {
+      sessions: sessions.filter((o) => o.id !== sessionId),
+      topics: topics.map((t) =>
+        t.sessionId === sessionId ? { ...t, sessionId: existing.id } : t
+      ),
+      sessionId: existing.id,
+    };
+  }
+  return {
+    sessions: sessions.map((o) => (o.id === sessionId ? { ...o, date: today } : o)),
+    topics,
+    sessionId,
   };
 }

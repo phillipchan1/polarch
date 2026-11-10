@@ -21,6 +21,8 @@ import { WrapUpSheet } from "./WrapUpSheet";
 import { markWrapped, wasWrapped } from "../lib/wrapUp";
 import { addDays, meetingSubjectName, meetingTitle, todayISO } from "../lib/readiness";
 import { DEMO } from "../lib/demo";
+import { flagOn } from "../lib/flags";
+import { happenedTodayAvailable } from "../lib/occurrenceGuard";
 
 import { Input } from "@/components/base/input/input";
 import { confirmAction } from "./ConfirmDialog";
@@ -81,6 +83,8 @@ export function MeetingEditor({
   const { state: locationState } = useLocation();
   const updateSession = useStore((s) => s.updateSession);
   const deleteSession = useStore((s) => s.deleteSession);
+  const logHappenedToday = useStore((s) => s.logHappenedToday);
+  const happenedTodaySessionId = useStore((s) => s.happenedTodaySessionId);
   const session = sessions.find((o) => o.id === sessionId);
   const meeting = meetings.find((m) => m.id === session?.meetingId);
   const person =
@@ -147,6 +151,10 @@ export function MeetingEditor({
     const next = session?.notes ?? "";
     setNotes((cur) => (cur.trim() === next ? cur : next));
   }, [session?.notes]);
+
+  useEffect(() => {
+    if (session?.date) setDate(session.date);
+  }, [session?.date]);
   useEffect(() => {
     const next = session?.point ?? "";
     setPoint((cur) => (cur.trim() === next ? cur : next));
@@ -262,6 +270,13 @@ export function MeetingEditor({
         .toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
         .toUpperCase()
     : "";
+  const offerHappenedToday = happenedTodayAvailable(
+    flagOn("singleOccurrenceGuard"),
+    happenedTodaySessionId,
+    session.id,
+    session.date,
+    todayISO()
+  );
 
   /*
    * Run: the meeting while it's happening. Leather across the top so it reads
@@ -385,6 +400,15 @@ export function MeetingEditor({
                     title="Edit dates"
                   >
                     <span className="eyebrow">{formatEntryDate(date)} · edit dates</span>
+                  </button>
+                )}
+                {offerHappenedToday && (
+                  <button
+                    type="button"
+                    className="self-start rounded-[9px] border border-primary bg-primary px-3 h-9 text-[13px] font-semibold text-primary hover:bg-secondary"
+                    onClick={() => logHappenedToday(session.id)}
+                  >
+                    It happened today
                   </button>
                 )}
                 <label htmlFor="why-we-met" className="sr-only">
