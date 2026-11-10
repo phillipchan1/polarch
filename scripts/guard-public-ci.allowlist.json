@@ -95,25 +95,25 @@
       "file": "checks.yml",
       "job": "deploy",
       "id": "checkout",
-      "sha256": "7adf5d7c8986d2143930bb6a0b9b2de757761ce782ca7e19fb9f111807eb0bec"
+      "sha256": "c25df5fba5d39998c0bcdb439cc74a18b2fb21583457c40664464155c530a052"
     },
     {
       "file": "checks.yml",
       "job": "deploy",
       "id": "setup-node",
-      "sha256": "58a60b87ca7ce0f26c67108966e1f03f27b0ed50092a0988e4deedc3ba658e9f"
+      "sha256": "7a4743508eb6e6020ccdf7bd562a5356da701919e34132ca8a5b0f36b7b25217"
     },
     {
       "file": "checks.yml",
       "job": "deploy",
       "id": "npm-ci",
-      "sha256": "3de692ebbf2b39bfa8e077ce46e6b7a11abfb63d82f76012b3ae90f7561f4529"
+      "sha256": "a67fabe1f64735c8d21e2fb323b32218f06c61140f9bbf401e6160b1b78f0843"
     },
     {
       "file": "checks.yml",
       "job": "deploy",
       "id": "cf-deploy",
-      "sha256": "d3911b582310f3b8e8c9f0a7e3f018d97ab5fdfd21e952fef5dceae92c2da7b0"
+      "sha256": "c8a4a1b0daafb07126192f84b8fbac65c1d055c783ed5a7c532a6e715bb4678f"
     },
     {
       "file": "cutover-migrate.yml",

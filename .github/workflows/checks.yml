@@ -1,6 +1,6 @@
 # Typecheck, lint, and the unit / prove scripts on every push and PR.
 # Production deploy: the `deploy` job ships to the polarch Worker
-# (`npm run cf:deploy`) only on a push to master in phillipchan1/leadwell,
+# (`npm run cf:deploy`) only on a push to master in phillipchan1/polarch,
 # after `checks` passes. Never on pull_request or from forks.
 # Secrets: CLOUDFLARE_API_TOKEN (scoped Workers deploy token), CLOUDFLARE_ACCOUNT_ID.
 # Never upload pg_dump, CSV, or row-data artifacts from this workflow.
@@ -129,7 +129,7 @@ jobs:
 
   deploy:
     needs: [checks]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'phillipchan1/leadwell' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'phillipchan1/polarch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
