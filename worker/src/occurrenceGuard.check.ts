@@ -99,6 +99,19 @@ await sql.unsafe(`DELETE FROM one_on_ones WHERE user_id = $1 AND meeting_id = $2
       !missed.sessions.some((o) => o.date > "2026-11-09"),
     "flag on: logging past Thursday Oct 29 stays Oct 29 (does not snap after today)",
   );
+
+  const offRhythmPast = applyOccurrence(
+    last,
+    weekly,
+    { meetingId: weekly.id, date: "2026-10-27" },
+    uid,
+    { guard: true, today: "2026-11-09" },
+  );
+  ok(
+    offRhythmPast.sessions.some((o) => o.date === "2026-10-27") &&
+      !offRhythmPast.sessions.some((o) => o.date === "2026-11-12"),
+    "flag on: logging past off-rhythm Tuesday Oct 27 lands on Oct 27",
+  );
 }
 
 // ── consecutive-day: guest booking Wednesday after a Tuesday session ─────
@@ -167,6 +180,29 @@ for (const [label, iso] of [
   ok(guest.sessionId !== "tue", `flag on: ${label} booked a new occurrence`);
   await sql.unsafe(`DELETE FROM topics WHERE user_id = $1 AND id = $2`, [phil, guest.id]);
   await sql.unsafe(`DELETE FROM one_on_ones WHERE user_id = $1 AND id = $2`, [phil, guest.sessionId]);
+}
+
+await sql.unsafe(
+  `INSERT INTO one_on_ones (user_id, id, person_id, meeting_id, date)
+   VALUES ($1, $2, $3, $4, $5)`,
+  [phil, "thu-nov12", "p1", weekly.id, "2026-11-12"],
+);
+for (const [label, iso] of [
+  ["Fri", "2026-11-13"],
+  ["Sat", "2026-11-14"],
+  ["Sun", "2026-11-15"],
+] as const) {
+  const guest = await guestAddTopic(
+    sql,
+    member!,
+    { text: `${label} onto existing Thursday`, date: iso },
+    new Date(`${iso}T16:00:00Z`),
+    { guard: true },
+  );
+  ok(guest.sessionId === "thu-nov12", `flag on: ${label} guest topic opens this week's existing Thursday`);
+  const days = await sessionDates();
+  ok(!days.includes("2026-11-19") && !days.includes(iso), `flag on: ${label} guest topic does not create next week or ${iso}`);
+  await sql.unsafe(`DELETE FROM topics WHERE user_id = $1 AND id = $2`, [phil, guest.id]);
 }
 
 if (fails.length) {

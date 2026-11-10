@@ -12,6 +12,8 @@ import { startMeeting } from "../lib/liveMeeting";
 import { cx } from "@/utils/cx";
 import { useStore } from "../store/useStore";
 import { parseColumnKey, plannedSlots } from "../lib/topics";
+import { flagOn } from "../lib/flags";
+import { happenedTodayAvailable } from "../lib/occurrenceGuard";
 import { SessionAgenda } from "./SessionAgenda";
 import { SessionEditor } from "./SessionEditor";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
@@ -190,6 +192,8 @@ function OccurrenceWhen({
   const moveOccurrence = useStore((s) => s.moveOccurrence);
   const skipOccurrence = useStore((s) => s.skipOccurrence);
   const restoreOccurrence = useStore((s) => s.restoreOccurrence);
+  const logHappenedToday = useStore((s) => s.logHappenedToday);
+  const happenedTodaySessionId = useStore((s) => s.happenedTodaySessionId);
   const [editing, setEditing] = useState(false);
   const [to, setTo] = useState(date);
   const today = todayISO();
@@ -207,6 +211,15 @@ function OccurrenceWhen({
   // written, because a written-up meeting happened on the day it did.
   const upcoming = date >= today;
   const changeable = upcoming || !session?.notes?.trim();
+  const offerHappenedToday = session
+    ? happenedTodayAvailable(
+        flagOn("singleOccurrenceGuard"),
+        happenedTodaySessionId,
+        session.id,
+        session.date,
+        today
+      )
+    : false;
   const from = { sessionId: session?.id ?? null, date };
 
   const days = daysBetween(today, date);
@@ -348,6 +361,15 @@ function OccurrenceWhen({
                 >
                   <Play aria-hidden className="size-3.5" />
                   {upcoming ? "Start meeting" : "Open write-up"}
+                </button>
+              )}
+              {offerHappenedToday && session && (
+                <button
+                  type="button"
+                  onClick={() => logHappenedToday(session.id)}
+                  className="inline-flex h-9 items-center rounded-[9px] border border-primary bg-primary px-3.5 text-[13px] font-semibold text-primary hover:bg-secondary touch:min-h-11"
+                >
+                  It happened today
                 </button>
               )}
               {changeable && (

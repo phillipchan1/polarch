@@ -1,6 +1,8 @@
 import type { Session, TrackedMeeting } from "../types";
 import {
+  applyHappenedToday,
   applyOccurrence,
+  happenedTodayAvailable,
   resolveOccurrence,
   sameDateReuseFor,
 } from "./occurrenceGuard";
@@ -127,14 +129,14 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
     guard: true,
   });
   ok(plan.date === "2026-10-08" && !plan.reuseId, "flag on: off-rhythm today snaps to this week's Thursday");
+  ok(plan.happenedTodayOffer === true, "flag on: creating this week's Thursday from Wednesday offers It happened today");
   ok(
     on.sessions.length === 2 && dates(on.sessions).join() === "2026-10-06,2026-10-08",
     "flag on: Wednesday becomes Thursday instead of a consecutive-day row"
   );
 
   // Keep tapping Book through the week. Thursday reuses this week; Fri/Sat
-  // snap forward to next Thursday rather than stacking consecutive days or
-  // landing on this (already past-relative-to-Friday) Thursday.
+  // open that existing Thursday rather than creating next week.
   let cur = on.sessions;
   for (const day of ["2026-10-08", "2026-10-09", "2026-10-10"]) {
     const next = book(cur, day, true, weekly, false, day);
@@ -142,8 +144,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   }
   ok(!dates(cur).some((d) => d === "2026-10-07" || d === "2026-10-09" || d === "2026-10-10"), "flag on: Wed/Fri/Sat never become their own rows");
   ok(
-    dates(cur).join() === "2026-10-06,2026-10-08,2026-10-15",
-    "flag on: leftover Tuesday + this Thursday + next Thursday, no consecutive-day run"
+    dates(cur).join() === "2026-10-06,2026-10-08",
+    "flag on: leftover Tuesday + this Thursday; Fri/Sat Book opens Thursday instead of creating next week"
   );
 }
 
@@ -155,8 +157,8 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   ok(dates(day1.sessions).join() === "2026-10-06", "flag on: a weekly meeting with no history may still book today");
   const day2 = book(day1.sessions, "2026-10-07", true, unanchored, false, "2026-10-07");
   ok(
-    dates(day2.sessions).join() === "2026-10-06,2026-10-13",
-    "flag on: the next day's Book snaps a week out instead of stacking Tuesday"
+    dates(day2.sessions).join() === "2026-10-06" && day2.sessionId === day1.sessionId,
+    "flag on: the next day's Book opens this week's existing meeting instead of stacking Tuesday or creating next week"
   );
 }
 
@@ -258,7 +260,7 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   ok(typedOn.sessions.length === 1 && typedOn.sessionId === have[0].id, "flag on: captureTopics reuses the existing meeting");
 }
 
-// ── logging a missed past week must not snap forward ─────────────────────
+// ── (a) a past date is a log: never snap forward ─────────────────────────
 {
   n = 0;
   const last = [session("2026-10-22")];
@@ -269,10 +271,17 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   );
 
   n = 0;
+  const tue = book(last, "2026-10-27", true, weekly, false, "2026-11-09");
+  ok(
+    dates(tue.sessions).join() === "2026-10-22,2026-10-27",
+    "flag on: a past off-rhythm Tuesday (Oct 27) lands on Oct 27"
+  );
+
+  n = 0;
   const wed = book(last, "2026-10-28", true, weekly, false, "2026-11-09");
   ok(
-    dates(wed.sessions).join() === "2026-10-22,2026-11-12",
-    "flag on: a past off-rhythm Wednesday snaps forward onto or after today, not into the past"
+    dates(wed.sessions).join() === "2026-10-22,2026-10-28",
+    "flag on: a past off-rhythm Wednesday lands on Oct 28, not snapped forward"
   );
 
   n = 0;
@@ -296,17 +305,63 @@ ok(FLAGS.singleOccurrenceGuard === false, "singleOccurrenceGuard defaults OFF so
   );
 }
 
-// ── flag on: Fri/Sat/Sun book forward, never onto last Thursday ──────────
+// ── (b) Book: existing this-week meeting opens; else create next + offer ─
 {
   const last = [session("2026-11-05")];
   for (const day of ["2026-11-13", "2026-11-14", "2026-11-15"] as const) {
     n = 0;
     const booked = book(last, day, true, weekly, false, day);
     ok(
-      dates(booked.sessions).join() === "2026-11-05,2026-11-19",
-      `flag on: booking today ${day} snaps forward to next Thursday Nov 19, not back to Nov 12`
+      dates(booked.sessions).join() === "2026-11-05,2026-11-19" &&
+        booked.happenedTodayOffer === true,
+      `flag on: booking today ${day} with no Thursday this week creates next Thursday Nov 19`
+    );
+    const created = booked.sessions.find((o) => o.date === "2026-11-19")!;
+    ok(
+      happenedTodayAvailable(true, booked.sessionId, created.id, created.date, day),
+      `flag on: booking today ${day} offers It happened today on the Nov 19 row`
+    );
+    const logged = applyHappenedToday(booked.sessions, [], booked.sessionId, day);
+    ok(
+      dates(logged.sessions).join() === `2026-11-05,${day}` &&
+        logged.sessions.some((o) => o.id === booked.sessionId && o.date === day),
+      `flag on: It happened today logs the Nov 19 book onto ${day}`
     );
   }
+
+  const thisWeek = [session("2026-11-05"), session("2026-11-12")];
+  for (const day of ["2026-11-13", "2026-11-14", "2026-11-15"] as const) {
+    n = 0;
+    const opened = book(thisWeek, day, true, weekly, false, day);
+    ok(
+      opened.sessionId === "have-2026-11-12" && opened.sessions === thisWeek,
+      `flag on: booking today ${day} opens this week's existing Thursday instead of creating next week`
+    );
+  }
+}
+
+// ── flag off: master behaviour is unchanged ──────────────────────────────
+{
+  n = 0;
+  const haveThu = [session("2026-11-12")];
+  const fri = book(haveThu, "2026-11-13", false, weekly, false, "2026-11-13");
+  ok(
+    dates(fri.sessions).join() === "2026-11-12,2026-11-13" && fri.sessionId !== "have-2026-11-12",
+    "flag off: Book on Friday with Thursday existing inserts Friday (master o.date === date, no snap)"
+  );
+
+  n = 0;
+  const last = [session("2026-10-22")];
+  const tue = book(last, "2026-10-27", false, weekly, false, "2026-11-09");
+  ok(
+    dates(tue.sessions).join() === "2026-10-22,2026-10-27",
+    "flag off: a past off-rhythm Tuesday inserts on Oct 27 (master, no snap)"
+  );
+
+  ok(
+    happenedTodayAvailable(false, "s1", "s1", "2026-11-19", "2026-11-13") === false,
+    "flag off: It happened today is not offered"
+  );
 }
 
 if (fails.length) {
