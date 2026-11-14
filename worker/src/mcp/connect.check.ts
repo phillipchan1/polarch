@@ -26,13 +26,19 @@ function ok(cond: boolean, msg: string) {
 }
 
 const origin = "http://localhost:8787";
+const mailed: string[] = [];
 const env = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BETTER_AUTH_URL: origin,
   ENVIRONMENT: "local" as const,
   ALLOWED_EMAILS: "phil@example.com,pat@example.com",
-  RESEND_API_KEY: "re_test",
-  AUTH_EMAIL_FROM: "login@polarch.day",
+  EMAIL: {
+    async send(message: { text?: string }) {
+      const m = /(http\S+magic-link\/verify\S+)/.exec(message.text ?? "");
+      if (m) mailed.push(m[1]);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail,
   ASSETS: { fetch: async () => new Response("<!doctype html><title>spa</title>", { status: 200, headers: { "content-type": "text/html" } }) },
 } as unknown as Env;
 const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
@@ -66,19 +72,6 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.route("/", realApp);
-
-// Capture the magic link instead of mailing it.
-const mailed: string[] = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url.includes("api.resend.com")) {
-    const m = /(http\S+magic-link\/verify\S+)/.exec((JSON.parse(String(init?.body ?? "{}")) as { text?: string }).text ?? "");
-    if (m) mailed.push(m[1]);
-    return new Response(JSON.stringify({ id: "e" }), { status: 200 });
-  }
-  return realFetch(input as never, init);
-}) as typeof fetch;
 
 let ipSeq = 0;
 const ip = () => `198.51.100.${++ipSeq}`;
@@ -299,7 +292,6 @@ ok(wipe.status === 200, "the workspace can be wiped");
 ok(((await db.query(`SELECT count(*)::int AS n FROM mcp_changes WHERE user_id = $1`, [philId])).rows[0] as { n: number }).n === 0, "…and takes the change journal with it");
 ok(((await db.query(`SELECT count(*)::int AS n FROM oauth_grants WHERE user_id = $1 AND revoked_at IS NULL`, [philId])).rows[0] as { n: number }).n > 0, "(connections survive a data reset — they belong to the account)");
 
-globalThis.fetch = realFetch;
 if (fails.length) {
   console.error(`connect.check: ${fails.length}/${checks} failed`);
   for (const f of fails) console.error("  -", f);

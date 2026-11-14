@@ -17,6 +17,20 @@ function ok(cond: boolean, msg: string) {
   if (!cond) fails.push(msg);
 }
 
+/** addSession / logHappenedToday read wall-clock todayISO(). Freeze a Tuesday
+ *  in the Nov 12 week so Fri–Sun book cases stay “this week”, not past. */
+const FROZEN_TODAY = new Date(2026, 10, 10, 12).getTime();
+const RealDate = Date;
+globalThis.Date = class extends RealDate {
+  constructor(...args: unknown[]) {
+    if (args.length === 0) super(FROZEN_TODAY);
+    else super(...(args as ConstructorParameters<typeof Date>));
+  }
+  static now() {
+    return FROZEN_TODAY;
+  }
+} as DateConstructor;
+
 const meeting: TrackedMeeting = {
   id: "m1",
   subjectKind: "person",

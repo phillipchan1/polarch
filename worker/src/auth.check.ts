@@ -13,7 +13,6 @@ import {
   logMagicLinkSoftCapSkip,
   magicLinkEmail,
   MagicLinkSendError,
-  resendIdempotencyKey,
   sendMagicLinkEmail,
 } from "./mail.ts";
 import {
@@ -68,10 +67,6 @@ ok(mail.subject === "Your Polarch sign-in link", "magic-link subject says Polarc
 ok(!/LeadWell/.test(mail.subject + mail.text + mail.html), "magic-link email no longer says LeadWell");
 ok(mail.text.includes("https://polarch.day/api/auth/magic-link/verify"), "magic-link body has url");
 
-const token = "visible-token-should-not-appear";
-const idem = await resendIdempotencyKey(token);
-ok(idem.startsWith("ml/"), "Resend idempotency key is hashed");
-ok(!idem.includes(token), "Resend idempotency key does not contain the token");
 ok(MAGIC_LINK_SEND_MAX === 3, "magic-link send is 3 per window");
 ok(MAGIC_LINK_EMAIL_PREFIX_MAX === 10, "hourly cap is 10 per email+IP-prefix");
 ok(MAGIC_LINK_EMAIL_SOFT_MAX === 200, "silent per-email soft cap is 200/hour");
@@ -142,34 +137,32 @@ ok(
 );
 
 const missingEnvErr = new MagicLinkSendError("missing_env");
-const resendHttpErr = new MagicLinkSendError("resend_http", 500);
+const cfEmailErr = new MagicLinkSendError("cf_email");
 ok(
   describeMagicLinkSendFailure(missingEnvErr).kind === "missing_env" &&
     describeMagicLinkSendFailure(missingEnvErr).status === undefined,
   "missing_env failure is kind-only",
 );
 ok(
-  describeMagicLinkSendFailure(resendHttpErr).kind === "resend_http" &&
-    describeMagicLinkSendFailure(resendHttpErr).status === 500,
-  "resend_http failure includes status",
+  describeMagicLinkSendFailure(cfEmailErr).kind === "cf_email" &&
+    describeMagicLinkSendFailure(cfEmailErr).status === undefined,
+  "cf_email failure is kind-only",
 );
 
 const logged: unknown[] = [];
 logMagicLinkSendFailure(missingEnvErr, (message, detail) => {
   logged.push(message, detail);
 });
-logMagicLinkSendFailure(resendHttpErr, (message, detail) => {
+logMagicLinkSendFailure(cfEmailErr, (message, detail) => {
   logged.push(message, detail);
 });
 const loggedBlob = JSON.stringify(logged);
-ok(loggedBlob.includes("missing_env") && loggedBlob.includes("resend_http"), "send logs include kind");
-ok(loggedBlob.includes("500"), "send logs include HTTP status");
+ok(loggedBlob.includes("missing_env") && loggedBlob.includes("cf_email"), "send logs include kind");
 ok(!loggedBlob.includes("@") && !loggedBlob.includes("token"), "send logs have no email or token");
 
-const realFetch = globalThis.fetch;
 try {
   await sendMagicLinkEmail(
-    { RESEND_API_KEY: "", AUTH_EMAIL_FROM: "" } as never,
+    {} as never,
     { email: "phil@example.com", url: "https://polarch.day/x", token: "visible-token" },
   );
   ok(false, "missing mail env throws");
@@ -177,20 +170,22 @@ try {
   ok(err instanceof MagicLinkSendError && err.kind === "missing_env", "missing mail env is missing_env");
 }
 
-globalThis.fetch = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+const throwingEmail = {
+  async send() {
+    throw new Error("boom to phil@example.com");
+  },
+} as unknown as SendEmail;
 try {
   await sendMagicLinkEmail(
-    { RESEND_API_KEY: "re_test", AUTH_EMAIL_FROM: "login@polarch.day" } as never,
+    { EMAIL: throwingEmail } as never,
     { email: "phil@example.com", url: "https://polarch.day/x", token: "visible-token" },
   );
-  ok(false, "Resend 500 throws");
+  ok(false, "Cloudflare Email throw throws");
 } catch (err) {
   ok(
-    err instanceof MagicLinkSendError && err.kind === "resend_http" && err.status === 500,
-    "Resend 500 is resend_http with status",
+    err instanceof MagicLinkSendError && err.kind === "cf_email" && err.status === undefined,
+    "Cloudflare Email throw is cf_email",
   );
-} finally {
-  globalThis.fetch = realFetch;
 }
 
 let unhandled = 0;
@@ -200,7 +195,7 @@ const onUnhandled = () => {
 const realError = console.error;
 console.error = () => {};
 process.on("unhandledRejection", onUnhandled);
-catchBackgroundTask(Promise.reject(new MagicLinkSendError("resend_http", 500)));
+catchBackgroundTask(Promise.reject(new MagicLinkSendError("cf_email")));
 await Promise.resolve();
 await Promise.resolve();
 ok(unhandled === 0, "request.ts fallback catch does not raise unhandledRejection");
@@ -237,7 +232,7 @@ const tOrphan = Date.now();
 scheduleAuthBackground(undefined, orphan);
 const orphanMs = Date.now() - tOrphan;
 ok(orphanMs < 50, `missing waitUntil still does not await the task (${orphanMs}ms)`);
-ok(!orphanDone, "missing-waitUntil path does not await Resend or the no-op");
+ok(!orphanDone, "missing-waitUntil path does not await Cloudflare Email or the no-op");
 await orphan;
 
 let waitUntilUnhandled = 0;
@@ -245,7 +240,7 @@ const onWaitUntilUnhandled = () => {
   waitUntilUnhandled += 1;
 };
 process.on("unhandledRejection", onWaitUntilUnhandled);
-const rejectedSkip = Promise.reject(new MagicLinkSendError("resend_http", 503));
+const rejectedSkip = Promise.reject(new MagicLinkSendError("cf_email"));
 const realSkipError = console.error;
 console.error = () => {};
 const pendingSkips = new Set<Promise<unknown>>();

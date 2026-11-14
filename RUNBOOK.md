@@ -10,7 +10,7 @@ equivalent is shipped.
 There are no crons, storage buckets, or payments. The public host will
 be **polarch.day**.
 
-Auth is a magic-link email. Primary sender: Cloudflare Email Service (`EMAIL` send_email binding, from `Polarch <login@polarch.day>`). Fallback on any binding error: Resend (`AUTH_EMAIL_FROM`). "Continue with Google" sits next to the magic link when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (see [Google sign-in](#google-sign-in)); without them the button is hidden and only the magic link runs.
+Auth is a magic-link email. The only sender is Cloudflare Email Service (`EMAIL` send_email binding, from `Polarch <login@polarch.day>`). "Continue with Google" sits next to the magic link when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (see [Google sign-in](#google-sign-in)); without them the button is hidden and only the magic link runs.
 Sign-in and sign-up are allowlist-only (`ALLOWED_EMAILS`).
 
 ---
@@ -28,10 +28,8 @@ Never put values here.
 | `TRUSTED_ORIGINS` | wrangler var | Optional comma-separated extra origins for CORS and Better Auth. `BETTER_AUTH_URL` is always included. Use for `www` or a leftover `*.workers.dev` host. Hosts must not contain `*`. |
 | `AUTH_COOKIE_DOMAIN` | wrangler var | Optional cookie `Domain`. Must equal or be a parent of the `BETTER_AUTH_URL` host and must not be a public suffix (`workers.dev`, `pages.dev`, `co.uk`, …). Omit on `*.workers.dev` / `*.pages.dev` and local. |
 | `ENVIRONMENT` | `.dev.vars` only | Set to `local` on your laptop. Omit in preview/prod. |
-| `RESEND_API_KEY` | wrangler secret | Resend sending key. Worker sends magic-link mail. |
-| `AUTH_EMAIL_FROM` | dashboard var only (never in `wrangler.jsonc`) | Resend **fallback** from-address, verified in Resend. Prod: `Polarch <login@usedayspring.app>`. Never a polarch.day address: polarch.day is not verified in Resend and `_dmarc.polarch.day` is `p=reject`. `worker/src/config.check.ts` fails CI if the config sets it on polarch.day. |
 | `CF_EMAIL_FROM` | wrangler var | Cloudflare Email Service from-address. Default `Polarch <login@polarch.day>`. |
-| `EMAIL` | send_email binding | Cloudflare Email Service (Workers Paid). polarch.day is onboarded for sending (cf-bounce MX/SPF, cf-bounce DKIM, `_dmarc`). Remove the binding to send via Resend only. |
+| `EMAIL` | send_email binding | Cloudflare Email Service (Workers Paid). The only magic-link sender. polarch.day is onboarded for sending (cf-bounce MX/SPF, cf-bounce DKIM, `_dmarc`). |
 | `OPENAI_API_KEY` | wrangler secret | Server-side OpenAI key. The client must never send it. |
 | `OPENAI_MODEL` | wrangler var | Optional. Must be in the Worker allowlist (`gpt-5-mini`, `gpt-5`). Defaults to `gpt-5-mini`. |
 | `ALLOWED_EMAILS` | wrangler var | Comma-separated allowlist for sign-up and sign-in. Set to Phil's email. Empty admits nobody. Non-allowlisted magic-link requests still return `{status:true}` and do not send mail. |
@@ -421,7 +419,7 @@ DROP SCHEMA migration_tmp CASCADE;
 1. Create a Neon project (free tier). Leave it empty.
 2. Create a Cloudflare Worker (`polarch`) with Workers static assets.
    Hyperdrive is Workers Paid; preview can use `DATABASE_URL` instead.
-3. Set the Worker secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`,
+3. Set the Worker secrets (`BETTER_AUTH_SECRET`,
    `OPENAI_API_KEY`, `DATABASE_URL`) and `ALLOWED_EMAILS` to Phil's email.
    Preview can use `BETTER_AUTH_URL` = the `*.workers.dev` origin. Production
    uses the custom domain (next step).
@@ -430,20 +428,18 @@ DROP SCHEMA migration_tmp CASCADE;
    `npx wrangler domains add polarch.day`). Then set:
    - `BETTER_AUTH_URL` = `https://polarch.day`
    - `AUTH_COOKIE_DOMAIN` = `polarch.day` (no leading dot)
-   - `AUTH_EMAIL_FROM` = `Polarch <login@usedayspring.app>` (dashboard only; the Resend fallback. Never polarch.day)
    - `TRUSTED_ORIGINS` only if you still serve `www` or `*.workers.dev`
    Do not rename the Worker, package, or repo.
-5. Primary sign-in mail is Cloudflare Email Service from `login@polarch.day`
-   (polarch.day onboarded under Email Sending). Resend stays the fallback on
-   usedayspring.app; do not move Resend to polarch.day.
+5. Sign-in mail is Cloudflare Email Service from `login@polarch.day`
+   (polarch.day onboarded under Email Sending). That is the only sender.
    Google OAuth is optional: see [Google sign-in](#google-sign-in).
 6. Run the migrate script against the empty Neon database (laptop, above) or
    the **cutover-migrate** workflow with `dry_run=false`.
 7. `npm run cf:deploy` (= `npm run build && wrangler deploy --keep-vars`), or
    `npm run cf:preview` first. `keep_vars: true` in `wrangler.jsonc` also keeps
    dashboard vars on a bare `wrangler deploy`. Check first with
-   `npx wrangler deploy --dry-run`: it must list `HYPERDRIVE (c18a2c83…)`,
-   `EMAIL (senders: login@polarch.day)` and no `AUTH_EMAIL_FROM`.
+   `npx wrangler deploy --dry-run`: it must list `HYPERDRIVE (c18a2c83…)` and
+   `EMAIL (senders: login@polarch.day)`.
 8. Open `https://polarch.day`. Request a magic-link to Phil's email. Data
    should be Phil's existing org (same `user.id` as the Supabase auth UUID).
 9. Smoke-test. The shared URL is `https://polarch.day`.
@@ -485,7 +481,7 @@ The 200/hour silent cap is keyed on the allowlisted email alone
 (`email-soft|/sign-in/magic-link|<lowercased-email>`). Hard limits are 10/hour
 per email+prefix, so about **20 distinct /24 (or IPv6 /48) prefixes** can
 burn the soft cap and **silently lock the victim out**: further requests
-still return `200 {status:true}` and skip Resend. The victim sees a successful
+still return `200 {status:true}` and skip the send. The victim sees a successful
 sign-in request and never gets mail.
 
 ### How to spot it
@@ -618,14 +614,11 @@ proxied `AAAA polarch.day 100::` record.
 
 ## Sign-in email: Cloudflare Email Service
 
-- Prod deploy: `npm run cf:deploy`. `keep_vars: true` keeps dashboard-only vars (`AUTH_EMAIL_FROM`, `BETTER_AUTH_URL`, `AUTH_COOKIE_DOMAIN`). It does **not** protect any var written in `wrangler.jsonc`: config vars always overwrite the dashboard. That is why `AUTH_EMAIL_FROM` is not in the config, so prod keeps `Polarch <login@usedayspring.app>` for the Resend fallback.
+- Prod deploy: `npm run cf:deploy`. `keep_vars: true` keeps dashboard-only vars (`BETTER_AUTH_URL`, `AUTH_COOKIE_DOMAIN`). It does **not** protect any var written in `wrangler.jsonc`: config vars always overwrite the dashboard.
 - Before Oct 27 2026, prod was deployed from a generated config (`hyperdrive.id` and vars patched outside the repo). The repo config now carries the real Hyperdrive id, so the repo deploy is the prod deploy.
 - The prod Worker was named `leadwell` until Oct 27 2026, when it was renamed to `polarch` in place (Workers API `PATCH /workers/workers/<id>`). Secrets, the `polarch.day` custom domain and sessions carried over. The Neon project was renamed to `polarch` the same day (id `falling-dream-34644326`, unchanged).
-- If the binding throws after Cloudflare already accepted the message, Resend also sends, so the user can get two links. Either link works; acceptable.
-- `allowed_destination_addresses` is deliberately not set. It only allows Email Routing *verified* destinations, so every allowlisted user would have to verify with Cloudflare first, and new users would silently fail over to Resend. `ALLOWED_EMAILS` plus the rate limit already bound who gets mail.
-- A binding failure logs `magic-link cloudflare send failed, falling back to resend {kind:"cf_email"}` (no email, no token).
-- Rollback: `wrangler rollback <previous version id>` (Resend-only code). DNS can stay; the sending subdomain can be disabled at
-  `DELETE /zones/<zone>/email/sending/subdomains/<id>` if needed.
+- `allowed_destination_addresses` is deliberately not set. It only allows Email Routing *verified* destinations, so every allowlisted user would have to verify with Cloudflare first, and new users would fail closed. `ALLOWED_EMAILS` plus the rate limit already bound who gets mail.
+- A missing binding logs `magic-link send failed {kind:"missing_env"}`. A binding throw logs `{kind:"cf_email"}`. Neither log includes the email or token.
 
 ## Google sign-in
 

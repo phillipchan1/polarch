@@ -20,13 +20,10 @@ export interface Env {
   AUTH_COOKIE_DOMAIN?: string;
   /** wrangler / `.dev.vars` only: `local` allows a localhost auth fallback. */
   ENVIRONMENT?: string;
-  /** Cloudflare Email Service `send_email` binding. Primary sender. */
+  /** Cloudflare Email Service `send_email` binding. */
   EMAIL?: SendEmail;
   /** Email Service from-address. Default `Polarch <login@polarch.day>`. */
   CF_EMAIL_FROM?: string;
-  RESEND_API_KEY?: string;
-  /** Resend fallback from-address (verified in Resend), e.g. `Polarch <login@usedayspring.app>`. */
-  AUTH_EMAIL_FROM?: string;
   /** Worker secret. Google OAuth web client (Polarch). Unset = Google off. */
   GOOGLE_CLIENT_ID?: string;
   /** Worker secret. Never a wrangler var. */
