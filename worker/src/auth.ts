@@ -226,7 +226,7 @@ export type CreateAuthOptions = {
 
 /**
  * Same dispatch for a real send and a soft-cap skip log. Never awaited —
- * Resend and the console log both run on this path only. DB work for the
+ * Cloudflare Email and the console log both run on this path only. DB work for the
  * cap (including the first-skip log key) is already done on the request.
  */
 export function scheduleAuthBackground(
@@ -240,7 +240,7 @@ export function scheduleAuthBackground(
   waitUntil?.(safe);
 }
 
-/** Real Resend send, or the soft-cap no-op (console log only — no DB). */
+/** Real Cloudflare Email send, or the soft-cap no-op (console log only — no DB). */
 export function deliverMagicLinkOrSkip(
   env: Env,
   opts: { email: string; url: string; token: string; send: boolean; firstSkip?: boolean },

@@ -1,8 +1,6 @@
 /**
  * wrangler.jsonc guard. `keep_vars` only keeps dashboard vars that are NOT in
- * the config, so a config AUTH_EMAIL_FROM would overwrite prod's Resend
- * fallback sender on every deploy. polarch.day is not verified in Resend and
- * _dmarc.polarch.day is p=reject, so that would silently kill the fallback.
+ * the config. Secrets never belong in vars.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -63,10 +61,7 @@ ok(cfg.keep_vars === true, "top-level keep_vars is true");
 const blocks: [string, Vars | undefined][] = [["top-level", cfg.vars]];
 for (const [name, e] of Object.entries(cfg.env ?? {})) blocks.push([`env.${name}`, e.vars]);
 for (const [name, vars] of blocks) {
-  // Absent, full stop: any config value would override the dashboard
-  // Resend sender on every deploy (keep_vars does not protect config vars).
-  ok(!Object.prototype.hasOwnProperty.call(vars ?? {}, "AUTH_EMAIL_FROM"), `${name} vars must not contain AUTH_EMAIL_FROM (dashboard-only)`);
-  ok(!/RESEND_API_KEY|BETTER_AUTH_SECRET|OPENAI_API_KEY|DATABASE_URL|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET/.test(Object.keys(vars ?? {}).join(",")), `${name} vars hold no secrets`);
+  ok(!/BETTER_AUTH_SECRET|OPENAI_API_KEY|DATABASE_URL|GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET/.test(Object.keys(vars ?? {}).join(",")), `${name} vars hold no secrets`);
 }
 const senders = [cfg.send_email, ...Object.values(cfg.env ?? {}).map((e) => e.send_email)];
 for (const s of senders) {

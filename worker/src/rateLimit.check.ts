@@ -89,13 +89,20 @@ const colNames = (cols.rows as { column_name: string }[]).map((row) => row.colum
 ok(colNames.includes("window_start"), "rate_limit has window_start after 004");
 ok(colNames.includes("last_request"), "rate_limit still has last_request");
 
+type CfSend = { from: unknown; to: unknown; subject?: string; text?: string; html?: string };
+const cfSends: CfSend[] = [];
 const env = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BETTER_AUTH_URL: "http://localhost:8787",
   ENVIRONMENT: "local" as const,
   ALLOWED_EMAILS: "phil@example.com",
-  RESEND_API_KEY: "re_test",
-  AUTH_EMAIL_FROM: "login@polarch.day",
+  EMAIL: {
+    async send(message: CfSend) {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      cfSends.push(message);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail,
 };
 
 try {
@@ -147,18 +154,6 @@ try {
   ok(!secondSkip, "later skip records stay quiet");
 
   await db.query("DELETE FROM rate_limit");
-  const resendCalls: string[] = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes("api.resend.com")) {
-      await new Promise((resolve) => setTimeout(resolve, 180));
-      resendCalls.push(String(init?.body ?? ""));
-      return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
-    }
-    return realFetch(input as never, init);
-  }) as typeof fetch;
-
   const skipLogs: unknown[][] = [];
   const realError = console.error;
   console.error = (...args: unknown[]) => {
@@ -174,9 +169,9 @@ try {
       firstSkip: true,
     });
     const skipReturnMs = Date.now() - tSkip;
-    ok(skipReturnMs < 50, `deliver no-op returns a promise without awaiting Resend (${skipReturnMs}ms)`);
+    ok(skipReturnMs < 50, `deliver no-op returns a promise without awaiting Cloudflare Email (${skipReturnMs}ms)`);
     await skipTask;
-    ok(resendCalls.length === 0, "soft-cap no-op does not call Resend");
+    ok(cfSends.length === 0, "soft-cap no-op does not call Cloudflare Email");
     ok(
       skipLogs.some((args) => (args[1] as { kind?: string } | undefined)?.kind === "soft_cap"),
       "no-op path logs kind soft_cap",
@@ -194,17 +189,16 @@ try {
       send: true,
     });
     const sendReturnMs = Date.now() - tSend;
-    ok(sendReturnMs < 50, `deliver send returns a promise without awaiting Resend (${sendReturnMs}ms)`);
+    ok(sendReturnMs < 50, `deliver send returns a promise without awaiting Cloudflare Email (${sendReturnMs}ms)`);
     await sendTask;
-    ok(resendCalls.length === 1, "send path dispatches Resend");
+    ok(cfSends.length === 1, "send path dispatches Cloudflare Email");
     ok(
       !skipLogs.some((args) => (args[1] as { kind?: string } | undefined)?.kind === "soft_cap"),
       "send path does not write a soft-cap log",
     );
-    ok(!JSON.stringify(resendCalls).includes("visible-token"), "Resend body is not the raw token");
+    ok(!JSON.stringify(cfSends).includes("visible-token"), "Cloudflare Email body is not the raw token");
   } finally {
     console.error = realError;
-    globalThis.fetch = realFetch;
   }
 
   await db.query("DELETE FROM rate_limit");

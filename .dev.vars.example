@@ -6,11 +6,9 @@ ENVIRONMENT=local
 # TRUSTED_ORIGINS=http://localhost:5173
 # AUTH_COOKIE_DOMAIN=
 BETTER_AUTH_SECRET=
-RESEND_API_KEY=
-# Resend fallback sender (verified in Resend). Never a polarch.day address.
-# AUTH_EMAIL_FROM=Polarch <login@usedayspring.app>
-# Cloudflare EMAIL binding sends from CF_EMAIL_FROM (default Polarch <login@polarch.day>).
-# wrangler dev uses the remote binding: it sends REAL mail.
+# Cloudflare Email Service is the only sender. The EMAIL binding sends from
+# CF_EMAIL_FROM (default Polarch <login@polarch.day>). wrangler dev uses the
+# remote binding: it sends REAL mail.
 OPENAI_API_KEY=
 # OPENAI_MODEL=gpt-5-mini
 # Comma-separated. Sign-up and sign-in only. Set to Phil's email.

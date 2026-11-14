@@ -57,13 +57,19 @@ function pgliteAsPool(db: PGlite): AuthDatabase {
 }
 
 const origin = "http://localhost:8787";
+const mailedUrls: string[] = [];
 const baseEnv = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BETTER_AUTH_URL: origin,
   ENVIRONMENT: "local" as const,
   ALLOWED_EMAILS: "phil@example.com,pat@example.com,new@example.com,kate@example.com",
-  RESEND_API_KEY: "re_test",
-  AUTH_EMAIL_FROM: "login@polarch.day",
+  EMAIL: {
+    async send(message: { text?: string }) {
+      const m = /(http\S+magic-link\/verify\S+)/.exec(message.text ?? "");
+      if (m) mailedUrls.push(m[1]);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail,
 };
 const googleEnv = {
   ...baseEnv,
@@ -75,8 +81,7 @@ const db = new PGlite();
 await applySchema(db);
 const pool = pgliteAsPool(db);
 
-// ---- fetch mock: Resend (magic link mail) + Google token endpoint ----
-const mailedUrls: string[] = [];
+// ---- fetch mock: Google token endpoint ----
 type Profile = { sub: string; email: string; email_verified: boolean; name?: string };
 let nextProfile: Profile | null = null;
 const tokenCalls: string[] = [];
@@ -84,12 +89,6 @@ const b64url = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64ur
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url.includes("api.resend.com")) {
-    const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
-    const m = /(http\S+magic-link\/verify\S+)/.exec(body.text ?? "");
-    if (m) mailedUrls.push(m[1]);
-    return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
-  }
   if (url.startsWith("https://oauth2.googleapis.com/token")) {
     tokenCalls.push(url);
     const p = nextProfile!;

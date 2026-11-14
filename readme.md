@@ -3,7 +3,7 @@
 A web app that shows the teams and people you lead as a visual org-chart tree,
 with an assessment-based profile (CliftonStrengths, Enneagram, MBTI) and an AI
 coach for each person. **Cloud-backed** on Cloudflare Workers + Neon, with
-**magic-link sign-in** (Resend). Cutover steps live in **[RUNBOOK.md](RUNBOOK.md)**.
+**magic-link sign-in** (Cloudflare Email Service). Cutover steps live in **[RUNBOOK.md](RUNBOOK.md)**.
 
 ## Setup
 

@@ -59,11 +59,9 @@ supabase db push
 
 Auth lives on the Worker. Google sign-in is optional (`GOOGLE_CLIENT_ID` /
 `GOOGLE_CLIENT_SECRET` Worker secrets; see `RUNBOOK.md` → Google sign-in). Mail goes
-through the Cloudflare `EMAIL` binding (login@polarch.day), with Resend as
-the fallback. Set `RESEND_API_KEY`, `AUTH_EMAIL_FROM` (dashboard only, the
-Resend sender), and `ALLOWED_EMAILS` (see
-`RUNBOOK.md` and `.dev.vars.example`). Only allowlisted addresses can
-request a link or create an account.
+through the Cloudflare Email Service `EMAIL` binding only (login@polarch.day).
+Set `ALLOWED_EMAILS` (see `RUNBOOK.md` and `.dev.vars.example`). Only
+allowlisted addresses can request a link or create an account.
 
 ---
 

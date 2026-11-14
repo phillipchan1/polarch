@@ -47,13 +47,25 @@ function pgliteAsPool(db: PGlite): AuthDatabase {
   };
 }
 
+type CfSend = { from: unknown; to: unknown; subject?: string; text?: string; html?: string };
+const cfSends: CfSend[] = [];
+function emailBinding(opts: { delayMs?: number; fail?: boolean } = {}): SendEmail {
+  return {
+    async send(message: CfSend) {
+      if (opts.fail) throw new Error("boom to phil@example.com");
+      if (opts.delayMs) await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
+      cfSends.push(message);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail;
+}
+
 const env = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BETTER_AUTH_URL: "http://localhost:8787",
   ENVIRONMENT: "local" as const,
   ALLOWED_EMAILS: "phil@example.com,pat@example.com",
-  RESEND_API_KEY: "re_test",
-  AUTH_EMAIL_FROM: "login@polarch.day",
+  EMAIL: emailBinding({ delayMs: 180 }),
 };
 
 const origin = "http://localhost:8787";
@@ -66,20 +78,6 @@ const auth = createAuth(env, pool, {
     background.push(task);
   },
 });
-
-const resendCalls: { to: string[]; idempotency?: string | null }[] = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url.includes("api.resend.com")) {
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    const headers = new Headers(init?.headers);
-    const body = JSON.parse(String(init?.body ?? "{}")) as { to?: string[] };
-    resendCalls.push({ to: body.to ?? [], idempotency: headers.get("Idempotency-Key") });
-    return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
-  }
-  return realFetch(input as never, init);
-}) as typeof fetch;
 
 function magicLinkHeaders(extra: Record<string, string> = {}): Headers {
   return new Headers({
@@ -133,8 +131,8 @@ try {
   const allowedBody = (await allowed.json()) as { status?: boolean };
   ok(allowed.status === 200, `allowlisted send is 200 (got ${allowed.status})`);
   ok(allowedBody.status === true, "allowlisted send returns {status:true}");
-  ok(allowedMs < 120, `allowlisted response does not wait on Resend (${allowedMs}ms)`);
-  ok(resendCalls.length === 0, "Resend has not finished before waitUntil flush");
+  ok(allowedMs < 120, `allowlisted response does not wait on Cloudflare Email (${allowedMs}ms)`);
+  ok(cfSends.length === 0, "Cloudflare Email has not finished before waitUntil flush");
 
   const tDenied = Date.now();
   const denied = await sendLink("stranger@example.com");
@@ -145,18 +143,14 @@ try {
   ok(deniedMs < 120, `non-allowlisted response is equally fast (${deniedMs}ms)`);
 
   await flushMail();
-  ok(resendCalls.length === 1, `waitUntil sent exactly one email (got ${resendCalls.length})`);
+  ok(cfSends.length === 1, `waitUntil sent exactly one email (got ${cfSends.length})`);
   ok(
-    resendCalls.every((c) => c.to.includes("phil@example.com")),
-    "Resend is not called for a non-allowlisted address",
-  );
-  ok(
-    resendCalls.every((c) => !c.idempotency?.includes("visible") && Boolean(c.idempotency)),
-    "Resend Idempotency-Key is present and is not the raw token",
+    cfSends.every((c) => c.to === "phil@example.com"),
+    "Cloudflare Email is not called for a non-allowlisted address",
   );
 
   await db.query("DELETE FROM rate_limit");
-  resendCalls.length = 0;
+  cfSends.length = 0;
   const strangerStatuses: number[] = [];
   for (let i = 0; i < 20; i++) {
     strangerStatuses.push(
@@ -172,7 +166,7 @@ try {
     (await keysMatching("%phil@example.com%")).length === 0,
     "stranger floods do not charge Phil's email buckets",
   );
-  ok(resendCalls.length === 0, "stranger floods do not call Resend");
+  ok(cfSends.length === 0, "stranger floods do not call Cloudflare Email");
 
   const prefixCap: number[] = [];
   for (let i = 1; i <= MAGIC_LINK_EMAIL_PREFIX_MAX + 1; i++) {
@@ -190,8 +184,8 @@ try {
     `11th from the same /24 is 429 (got ${prefixCap[MAGIC_LINK_EMAIL_PREFIX_MAX]})`,
   );
   ok(
-    resendCalls.length === MAGIC_LINK_EMAIL_PREFIX_MAX,
-    `per-prefix hourly cap holds at ${MAGIC_LINK_EMAIL_PREFIX_MAX} real sends (got ${resendCalls.length})`,
+    cfSends.length === MAGIC_LINK_EMAIL_PREFIX_MAX,
+    `per-prefix hourly cap holds at ${MAGIC_LINK_EMAIL_PREFIX_MAX} real sends (got ${cfSends.length})`,
   );
   ok(
     (await keysMatching("email|/sign-in/magic-link|%")).length === 0,
@@ -199,7 +193,7 @@ try {
   );
 
   await db.query("DELETE FROM rate_limit");
-  resendCalls.length = 0;
+  cfSends.length = 0;
   const philFlood: number[] = [];
   for (let i = 1; i <= 25; i++) {
     philFlood.push(
@@ -211,15 +205,15 @@ try {
     philFlood.every((s) => s === 200),
     `25-prefix Phil flood is all 200 (got ${philFlood.join(",")})`,
   );
-  ok(resendCalls.length === 25, `25 prefixes each get a real send (got ${resendCalls.length})`);
-  resendCalls.length = 0;
+  ok(cfSends.length === 25, `25 prefixes each get a real send (got ${cfSends.length})`);
+  cfSends.length = 0;
   const freshPrefix = await sendLink("phil@example.com", { "cf-connecting-ip": "198.51.200.1" });
   ok(freshPrefix.status === 200, "Phil from a fresh prefix still gets 200 after a 25-prefix flood");
   await flushMail();
-  ok(resendCalls.length === 1, "fresh prefix gets a real send, not a silent 200");
+  ok(cfSends.length === 1, "fresh prefix gets a real send, not a silent 200");
 
   await db.query("DELETE FROM rate_limit");
-  resendCalls.length = 0;
+  cfSends.length = 0;
   const invalidConsumes: boolean[] = [];
   for (let i = 1; i <= MAGIC_LINK_EMAIL_PREFIX_MAX + 1; i++) {
     invalidConsumes.push(
@@ -241,7 +235,7 @@ try {
   );
 
   await db.query("DELETE FROM rate_limit");
-  resendCalls.length = 0;
+  cfSends.length = 0;
   const softWindowStart = Date.now() - 1000;
   await db.query(
     "INSERT INTO rate_limit (id, key, count, last_request, window_start) VALUES ($1, $2, $3, $4, $5)",
@@ -266,9 +260,9 @@ try {
     ok(soft.status === 200, `soft cap still returns 200 (got ${soft.status})`);
     ok(softBody.status === true, "soft cap returns {status:true}");
     ok(softMs < 120, `soft-cap response has the same fast timing (${softMs}ms)`);
-    ok(resendCalls.length === 0, "capped path does not await Resend");
+    ok(cfSends.length === 0, "capped path does not await Cloudflare Email");
     await flushMail();
-    ok(resendCalls.length === 0, "soft cap skips the send");
+    ok(cfSends.length === 0, "soft cap skips the send");
     const skipLog = softLogs.find((args) => {
       const detail = args[1] as { kind?: string } | undefined;
       return detail?.kind === "soft_cap";
@@ -283,7 +277,7 @@ try {
     ok(soft2.status === 200, `second soft-cap send is still 200 (got ${soft2.status})`);
     ok(soft2Ms < 120, `second soft-cap send stays fast (${soft2Ms}ms)`);
     await flushMail();
-    ok(resendCalls.length === 0, "second soft-cap send is also skipped");
+    ok(cfSends.length === 0, "second soft-cap send is also skipped");
     ok(
       !softLogs.some((args) => (args[1] as { kind?: string } | undefined)?.kind === "soft_cap"),
       "soft cap does not log again",
@@ -295,7 +289,7 @@ try {
   const noWaitAuth = createAuth(env, pool);
   try {
     await db.query("DELETE FROM rate_limit");
-    resendCalls.length = 0;
+    cfSends.length = 0;
     const noWaitCapStart = Date.now();
     await db.query(
       "INSERT INTO rate_limit (id, key, count, last_request, window_start) VALUES ($1, $2, $3, $4, $5)",
@@ -322,9 +316,9 @@ try {
       const noWaitCapMs = Date.now() - tNoWaitCap;
       ok(noWaitCap.status === 200, `capped without waitUntil is 200 (got ${noWaitCap.status})`);
       ok(noWaitCapMs < 120, `capped without waitUntil does not await extra work (${noWaitCapMs}ms)`);
-      ok(resendCalls.length === 0, "capped without waitUntil does not await Resend");
+      ok(cfSends.length === 0, "capped without waitUntil does not await Cloudflare Email");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      ok(resendCalls.length === 0, "capped without waitUntil dispatches a no-op, not Resend");
+      ok(cfSends.length === 0, "capped without waitUntil dispatches a no-op, not Cloudflare Email");
       ok(
         noWaitLogs.some((args) => (args[1] as { kind?: string } | undefined)?.kind === "soft_cap"),
         "capped without waitUntil still logs in the background",
@@ -334,7 +328,7 @@ try {
     }
 
     await db.query("DELETE FROM rate_limit");
-    resendCalls.length = 0;
+    cfSends.length = 0;
     const tNoWaitSend = Date.now();
     const noWaitSend = await sendLink(
       "phil@example.com",
@@ -345,11 +339,11 @@ try {
     ok(noWaitSend.status === 200, "uncapped without waitUntil is 200");
     ok(
       noWaitSendMs < 120,
-      `uncapped without waitUntil does not await Resend (${noWaitSendMs}ms)`,
+      `uncapped without waitUntil does not await Cloudflare Email (${noWaitSendMs}ms)`,
     );
-    ok(resendCalls.length === 0, "uncapped without waitUntil has not finished Resend yet");
+    ok(cfSends.length === 0, "uncapped without waitUntil has not finished Cloudflare Email yet");
     await new Promise((resolve) => setTimeout(resolve, 250));
-    ok(resendCalls.length === 1, "uncapped without waitUntil still dispatches the send");
+    ok(cfSends.length === 1, "uncapped without waitUntil still dispatches the send");
   } finally {
     await closeAuth(noWaitAuth);
   }
@@ -431,7 +425,7 @@ try {
   }
 
   await db.query("DELETE FROM rate_limit");
-  resendCalls.length = 0;
+  cfSends.length = 0;
   const sendStatuses: number[] = [];
   for (let i = 0; i < 20; i++) {
     sendStatuses.push((await sendLink("phil@example.com")).status);
@@ -439,7 +433,7 @@ try {
   await flushMail();
   const sendOk = sendStatuses.filter((s) => s === 200).length;
   const sendLimited = sendStatuses.filter((s) => s === 429).length;
-  ok(resendCalls.length <= MAGIC_LINK_SEND_MAX, `20 sends produce ≤${MAGIC_LINK_SEND_MAX} Resend calls (got ${resendCalls.length})`);
+  ok(cfSends.length <= MAGIC_LINK_SEND_MAX, `20 sends produce ≤${MAGIC_LINK_SEND_MAX} Cloudflare Email sends (got ${cfSends.length})`);
   ok(sendLimited >= 20 - MAGIC_LINK_SEND_MAX, `20 sends produce 429s after the cap (got ${sendLimited} 429s, statuses=${sendStatuses.join(",")})`);
   ok(sendOk <= MAGIC_LINK_SEND_MAX, `20 sends produce ≤${MAGIC_LINK_SEND_MAX} successes (got ${sendOk})`);
 
@@ -522,7 +516,7 @@ try {
   try {
     const missingBg: Promise<unknown>[] = [];
     const missingAuth = createAuth(
-      { ...env, RESEND_API_KEY: "", AUTH_EMAIL_FROM: "" },
+      { ...env, EMAIL: undefined },
       pool,
       { waitUntil: (task) => missingBg.push(task) },
     );
@@ -537,44 +531,39 @@ try {
       const detail = args[1] as { kind?: string } | undefined;
       return detail?.kind === "missing_env";
     });
-    ok(Boolean(missingLog), "missing RESEND/FROM logs kind missing_env");
+    ok(Boolean(missingLog), "missing EMAIL binding logs kind missing_env");
     const missingBlob = JSON.stringify(missingLog ?? []);
     ok(!missingBlob.includes("phil@example.com"), "missing_env log has no email");
     ok(!/"token"/.test(missingBlob) && !missingBlob.includes("visible"), "missing_env log has no token");
     await closeAuth(missingAuth);
 
     failLogs.length = 0;
-    const resendFailBg: Promise<unknown>[] = [];
-    const failingFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes("api.resend.com")) {
-        return new Response("upstream failed", { status: 500 });
-      }
-      return failingFetch(input as never, init);
-    }) as typeof fetch;
-    const failAuth = createAuth(env, pool, { waitUntil: (task) => resendFailBg.push(task) });
-    const resendFail = await sendLink(
+    const cfFailBg: Promise<unknown>[] = [];
+    const failAuth = createAuth(
+      { ...env, EMAIL: emailBinding({ fail: true }) },
+      pool,
+      { waitUntil: (task) => cfFailBg.push(task) },
+    );
+    const cfFail = await sendLink(
       "phil@example.com",
       { "cf-connecting-ip": "203.0.113.81" },
       failAuth,
     );
-    ok(resendFail.status === 200, `Resend 500 still returns 200 (got ${resendFail.status})`);
-    await Promise.all(resendFailBg);
+    ok(cfFail.status === 200, `Cloudflare Email throw still returns 200 (got ${cfFail.status})`);
+    await Promise.all(cfFailBg);
     const httpLog = failLogs.find((args) => {
-      const detail = args[1] as { kind?: string; status?: number } | undefined;
-      return detail?.kind === "resend_http" && detail.status === 500;
+      const detail = args[1] as { kind?: string } | undefined;
+      return detail?.kind === "cf_email";
     });
-    ok(Boolean(httpLog), "Resend 500 logs kind resend_http and status 500");
+    ok(Boolean(httpLog), "Cloudflare Email throw logs kind cf_email");
     const httpBlob = JSON.stringify(httpLog ?? []);
-    ok(!httpBlob.includes("phil@example.com"), "resend_http log has no email");
-    ok(!/"token"/.test(httpBlob) && !httpBlob.includes("visible"), "resend_http log has no token");
+    ok(!httpBlob.includes("phil@example.com"), "cf_email log has no email");
+    ok(!/"token"/.test(httpBlob) && !httpBlob.includes("visible"), "cf_email log has no token");
     await closeAuth(failAuth);
   } finally {
     console.error = realError;
   }
 } finally {
-  globalThis.fetch = realFetch;
   await closeAuth(auth);
   await db.close();
 }

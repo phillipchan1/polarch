@@ -67,13 +67,19 @@ function pgliteAsPool(db: PGlite): AuthDatabase {
 }
 
 const origin = "http://localhost:8787";
+const mailedUrls: string[] = [];
 const env = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long",
   BETTER_AUTH_URL: origin,
   ENVIRONMENT: "local" as const,
   ALLOWED_EMAILS: "phil@example.com,pat@example.com",
-  RESEND_API_KEY: "re_test",
-  AUTH_EMAIL_FROM: "login@polarch.day",
+  EMAIL: {
+    async send(message: { text?: string }) {
+      const m = /(http\S+magic-link\/verify\S+)/.exec(message.text ?? "");
+      if (m) mailedUrls.push(m[1]);
+      return { messageId: "m1" };
+    },
+  } as unknown as SendEmail,
 } as unknown as Env;
 const googleEnv = {
   ...env,
@@ -94,20 +100,6 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.route("/", oauthApp);
-
-// ── Mail mock: capture the magic link instead of sending it ──────────────
-const mailedUrls: string[] = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url.includes("api.resend.com")) {
-    const body = JSON.parse(String(init?.body ?? "{}")) as { text?: string };
-    const m = /(http\S+magic-link\/verify\S+)/.exec(body.text ?? "");
-    if (m) mailedUrls.push(m[1]);
-    return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
-  }
-  return realFetch(input as never, init);
-}) as typeof fetch;
 
 function cookieHeader(res: Response): string {
   return res.headers

@@ -4,9 +4,8 @@
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-01-15",
   "compatibility_flags": ["nodejs_compat"],
-  // Every deploy keeps dashboard-only vars (BETTER_AUTH_URL, AUTH_COOKIE_DOMAIN,
-  // AUTH_EMAIL_FROM). keep_vars does NOT protect vars listed below, so never
-  // put AUTH_EMAIL_FROM here (worker/src/config.check.ts enforces it).
+  // Every deploy keeps dashboard-only vars (BETTER_AUTH_URL, AUTH_COOKIE_DOMAIN).
+  // keep_vars does NOT protect vars listed below.
   "keep_vars": true,
   // Static Vite build. Deep links fall back to index.html (same as Vercel SPA).
   "assets": {
@@ -35,8 +34,8 @@
       "localConnectionString": "postgresql://postgres:postgres@127.0.0.1:5432/polarch"
     }
   ],
-  // Cloudflare Email Service (Workers Paid). Primary magic-link sender from
-  // login@polarch.day; Resend (AUTH_EMAIL_FROM) is the fallback on error.
+  // Cloudflare Email Service (Workers Paid). Magic-link sender from
+  // login@polarch.day.
   "send_email": [
     { "name": "EMAIL", "remote": true, "allowed_sender_addresses": ["login@polarch.day"] }
   ],
